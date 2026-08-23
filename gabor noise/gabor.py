@@ -226,35 +226,44 @@ if __name__ == "__main__":
     mode = input("Enter 'input' to provide parameters or 'dataset' to use the GAN dataset: ")
 
     if mode == 'input':
-            height = int(input("Enter the height of the generated image: "))
-            width = int(input("Enter the width of the generated image: "))
-            brick_width = int(input("Enter the width of the bricks: "))
-            brick_height = int(input("Enter the height of the bricks: "))
-            mortar_width = int(input("Enter the width of the mortar: "))
-            image_count = int(input("Enter the number of images to generate: "))
-            textureRotation = int(input("Enter the rotation angle for the texture (in degrees): "))
-            frequency = float(input("Enter the horizontal Gabor frequency: "))
-            theta = float(input("Enter the horizontal Gabor angle (in degrees): "))
-            sigma_x = float(input("Enter the horizontal Gabor sigma_x: "))
-            sigma_y = float(input("Enter the horizontal Gabor sigma_y: "))
-            vertical_frequency = float(input("Enter the vertical Gabor frequency: "))
-            vertical_theta = float(input("Enter the vertical Gabor angle (in degrees): "))
-            vertical_sigma_x = float(input("Enter the vertical Gabor sigma_x: "))
-            vertical_sigma_y = float(input("Enter the vertical Gabor sigma_y: "))
-            horizontal_weight = float(input("Enter the horizontal noise weight: "))
-            vertical_weight = float(input("Enter the vertical noise weight: "))
-            mortar_frequency = float(input("Enter the mortar Gabor frequency: "))
-            mortar_theta = float(input("Enter the mortar Gabor angle (in degrees): "))
-            mortar_sigma_x = float(input("Enter the mortar Gabor sigma_x: "))
-            mortar_sigma_y = float(input("Enter the mortar Gabor sigma_y: "))
-            brick_base = float(input("Enter the base brick intensity (0 to 1): "))
-            brick_contrast = float(input("Enter the brick contrast: "))
-            mortar_base = float(input("Enter the base mortar intensity (0 to 1): "))
-            mortar_contrast = float(input("Enter the mortar contrast: "))
-            seed = int(input("Enter the seed for random number generation: "))
+            texture_type = input("Enter the texture type (brick, grass, gravel): ")
+            if texture_type =="brick":
+                height = int(input("Enter the height of the generated image: "))
+                width = int(input("Enter the width of the generated image: "))
+                brick_width = int(input("Enter the width of the bricks: "))
+                brick_height = int(input("Enter the height of the bricks: "))
+                mortar_width = int(input("Enter the width of the mortar: "))
+                image_count = int(input("Enter the number of images to generate: "))
+                textureRotation = int(input("Enter the rotation angle for the texture (in degrees): "))
+                frequency = float(input("Enter the horizontal Gabor frequency: "))
+                theta = float(input("Enter the horizontal Gabor angle (in degrees): "))
+                sigma_x = float(input("Enter the horizontal Gabor sigma_x: "))
+                sigma_y = float(input("Enter the horizontal Gabor sigma_y: "))
+                vertical_frequency = float(input("Enter the vertical Gabor frequency: "))
+                vertical_theta = float(input("Enter the vertical Gabor angle (in degrees): "))
+                vertical_sigma_x = float(input("Enter the vertical Gabor sigma_x: "))
+                vertical_sigma_y = float(input("Enter the vertical Gabor sigma_y: "))
+                horizontal_weight = float(input("Enter the horizontal noise weight: "))
+                vertical_weight = float(input("Enter the vertical noise weight: "))
+                mortar_frequency = float(input("Enter the mortar Gabor frequency: "))
+                mortar_theta = float(input("Enter the mortar Gabor angle (in degrees): "))
+                mortar_sigma_x = float(input("Enter the mortar Gabor sigma_x: "))
+                mortar_sigma_y = float(input("Enter the mortar Gabor sigma_y: "))
+                brick_base = float(input("Enter the base brick intensity (0 to 1): "))
+                brick_contrast = float(input("Enter the brick contrast: "))
+                mortar_base = float(input("Enter the base mortar intensity (0 to 1): "))
+                mortar_contrast = float(input("Enter the mortar contrast: "))
+                seed = int(input("Enter the seed for random number generation: "))
+            elif texture_type == "grass":
+                pass
+            elif texture_type == "gravel":
+                pass
 
     elif mode == 'dataset':
         # Use the GAN dataset parameters
+        texture_type = input("Enter the texture type (brick, grass, gravel): ")
+        if texture_type == 'brick':
+            pass
         pass
     else:
         print("Invalid mode selected. Please enter 'input' or 'dataset'.")
