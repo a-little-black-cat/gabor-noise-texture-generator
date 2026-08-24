@@ -220,6 +220,51 @@ def make_brick_texture(
 
     return np.clip(texture, 0.0, 1.0)
 
+def make_grass_texture(
+    height,
+    width,
+    frequency,
+    theta,
+    sigma_x,
+    sigma_y,
+    seed,
+):
+    grass_noise = make_gabor_noise(
+        height=height,
+        width=width,
+        frequency=frequency,
+        theta=theta,
+        sigma_x=sigma_x,
+        sigma_y=sigma_y,
+        seed=seed,
+    )
+
+    grass_texture = normalize(grass_noise)
+
+    return grass_texture
+
+def make_gravel_texture(
+    height,
+    width,
+    frequency,
+    theta,
+    sigma_x,
+    sigma_y,
+    seed,
+):
+    gravel_noise = make_gabor_noise(
+        height=height,
+        width=width,
+        frequency=frequency,
+        theta=theta,
+        sigma_x=sigma_x,
+        sigma_y=sigma_y,
+        seed=seed,
+    )
+
+    gravel_texture = normalize(gravel_noise)
+
+    return gravel_texture
 
 if __name__ == "__main__": 
 
@@ -233,6 +278,7 @@ if __name__ == "__main__":
                 brick_width = int(input("Enter the width of the bricks: "))
                 brick_height = int(input("Enter the height of the bricks: "))
                 mortar_width = int(input("Enter the width of the mortar: "))
+                mortar_height = int(input("Enter the height of the mortar: "))
                 image_count = int(input("Enter the number of images to generate: "))
                 textureRotation = int(input("Enter the rotation angle for the texture (in degrees): "))
                 frequency = float(input("Enter the horizontal Gabor frequency: "))
@@ -255,16 +301,37 @@ if __name__ == "__main__":
                 mortar_contrast = float(input("Enter the mortar contrast: "))
                 seed = int(input("Enter the seed for random number generation: "))
             elif texture_type == "grass":
-                pass
+                height = int(input("Enter the height of the generated image: "))
+                width = int(input("Enter the width of the generated image: "))
+                frequency = float(input("Enter the Gabor frequency: "))
+                theta = float(input("Enter the Gabor angle (in degrees): "))
+                sigma_x = float(input("Enter the Gabor sigma_x: "))
+                sigma_y = float(input("Enter the Gabor sigma_y: "))
+                seed = int(input("Enter the seed for random number generation: "))  
+
+                
             elif texture_type == "gravel":
-                pass
+                height = int(input("Enter the height of the generated image: "))
+                width = int(input("Enter the width of the generated image: "))
+                frequency = float(input("Enter the Gabor frequency: "))
+                theta = float(input("Enter the Gabor angle (in degrees): "))
+                sigma_x = float(input("Enter the Gabor sigma_x: "))
+                sigma_y = float(input("Enter the Gabor sigma_y: "))
+                seed = int(input("Enter the seed for random number generation: "))
 
     elif mode == 'dataset':
         # Use the GAN dataset parameters
+        ## implemented when GAN gets written
         texture_type = input("Enter the texture type (brick, grass, gravel): ")
         if texture_type == 'brick':
             pass
-        pass
+        elif texture_type == 'grass':
+            pass
+        elif texture_type == 'gravel':
+            pass
+        else:
+            print("Invalid texture type. Please enter 'brick', 'grass', or 'gravel'.")
+            exit(1)
     else:
         print("Invalid mode selected. Please enter 'input' or 'dataset'.")
         exit(1)
