@@ -10,17 +10,26 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy import ndimage
 from skimage.filters import gabor_kernel
+import tkinter as Tk
+from tkinter import messagebox, ttk
 
-def userInputMode():
-    texture_type = input("Enter the texture type (brick, grass, gravel): ").strip().lower()
+
+def prompt_value(prompt, default, converter):
+    value = input(f"{prompt} [{default}]: ").strip()
+    return default if not value else converter(value)
+    # This is to minimize the number of input prompts for the user. If the user presses enter without typing anything, the default value will be used. Otherwise, the input will be converted to the specified type (int or float) using the provided converter function.
+
+
+def consoleInputMode():
+    texture_type = input("Enter the texture type (brick, grass, gravel) [brick]: ").strip().lower() or "brick"
     if texture_type not in {"brick", "grass", "gravel"}:
         raise ValueError("texture type must be brick, grass, or gravel")
 
-    height = int(input("Enter the height of the generated image: "))
-    width = int(input("Enter the width of the generated image: "))
-    image_count = int(input("Enter the number of images to generate: "))
-    texture_rotation = float(input("Enter the rotation angle for the texture (in degrees): "))
-    seed = int(input("Enter the seed for random number generation: "))
+    height = prompt_value("Enter the height of the generated image", 512, int)
+    width = prompt_value("Enter the width of the generated image", 512, int)
+    image_count = prompt_value("Enter the number of images to generate", 1, int)
+    texture_rotation = prompt_value("Enter the rotation angle for the texture (in degrees)", 0.0, float)
+    seed = prompt_value("Enter the seed for random number generation", 42, int)
 
     if image_count < 1:
         raise ValueError("image_count must be at least 1")
@@ -28,35 +37,35 @@ def userInputMode():
     texture_parameters = {}
     if texture_type == "brick":
         texture_parameters = {
-            "brick_width": int(input("Enter the width of the bricks: ")),
-            "brick_height": int(input("Enter the height of the bricks: ")),
-            "mortar_width": int(input("Enter the width of the mortar: ")),
-            "mortar_height": int(input("Enter the height of the mortar: ")),
-            "frequency": float(input("Enter the horizontal Gabor frequency: ")),
-            "theta": np.deg2rad(float(input("Enter the horizontal Gabor angle (in degrees): "))),
-            "sigma_x": float(input("Enter the horizontal Gabor sigma_x: ")),
-            "sigma_y": float(input("Enter the horizontal Gabor sigma_y: ")),
-            "vertical_frequency": float(input("Enter the vertical Gabor frequency: ")),
-            "vertical_theta": np.deg2rad(float(input("Enter the vertical Gabor angle (in degrees): "))),
-            "vertical_sigma_x": float(input("Enter the vertical Gabor sigma_x: ")),
-            "vertical_sigma_y": float(input("Enter the vertical Gabor sigma_y: ")),
-            "horizontal_weight": float(input("Enter the horizontal noise weight: ")),
-            "vertical_weight": float(input("Enter the vertical noise weight: ")),
-            "mortar_frequency": float(input("Enter the mortar Gabor frequency: ")),
-            "mortar_theta": np.deg2rad(float(input("Enter the mortar Gabor angle (in degrees): "))),
-            "mortar_sigma_x": float(input("Enter the mortar Gabor sigma_x: ")),
-            "mortar_sigma_y": float(input("Enter the mortar Gabor sigma_y: ")),
-            "brick_base": float(input("Enter the base brick intensity (0 to 1): ")),
-            "brick_contrast": float(input("Enter the brick contrast: ")),
-            "mortar_base": float(input("Enter the base mortar intensity (0 to 1): ")),
-            "mortar_contrast": float(input("Enter the mortar contrast: ")),
+            "brick_width": prompt_value("Enter the width of the bricks", 64, int),
+            "brick_height": prompt_value("Enter the height of the bricks", 32, int),
+            "mortar_width": prompt_value("Enter the width of the mortar", 2, int),
+            "mortar_height": prompt_value("Enter the height of the mortar", 2, int),
+            "frequency": prompt_value("Enter the horizontal Gabor frequency", 0.08, float),
+            "theta": np.deg2rad(prompt_value("Enter the horizontal Gabor angle (in degrees)", 0.0, float)),
+            "sigma_x": prompt_value("Enter the horizontal Gabor sigma_x", 5.0, float),
+            "sigma_y": prompt_value("Enter the horizontal Gabor sigma_y", 2.0, float),
+            "vertical_frequency": prompt_value("Enter the vertical Gabor frequency", 0.08, float),
+            "vertical_theta": np.deg2rad(prompt_value("Enter the vertical Gabor angle (in degrees)", 90.0, float)),
+            "vertical_sigma_x": prompt_value("Enter the vertical Gabor sigma_x", 5.0, float),
+            "vertical_sigma_y": prompt_value("Enter the vertical Gabor sigma_y", 2.0, float),
+            "horizontal_weight": prompt_value("Enter the horizontal noise weight", 0.7, float),
+            "vertical_weight": prompt_value("Enter the vertical noise weight", 0.3, float),
+            "mortar_frequency": prompt_value("Enter the mortar Gabor frequency", 0.12, float),
+            "mortar_theta": np.deg2rad(prompt_value("Enter the mortar Gabor angle (in degrees)", 0.0, float)),
+            "mortar_sigma_x": prompt_value("Enter the mortar Gabor sigma_x", 2.0, float),
+            "mortar_sigma_y": prompt_value("Enter the mortar Gabor sigma_y", 1.0, float),
+            "brick_base": prompt_value("Enter the base brick intensity (0 to 1)", 0.55, float),
+            "brick_contrast": prompt_value("Enter the brick contrast", 0.2, float),
+            "mortar_base": prompt_value("Enter the base mortar intensity (0 to 1)", 0.25, float),
+            "mortar_contrast": prompt_value("Enter the mortar contrast", 0.05, float),
         }
     else:
         texture_parameters = {
-            "frequency": float(input("Enter the Gabor frequency: ")),
-            "theta": float(input("Enter the Gabor angle (in degrees): ")),
-            "sigma_x": float(input("Enter the Gabor sigma_x: ")),
-            "sigma_y": float(input("Enter the Gabor sigma_y: ")),
+            "frequency": prompt_value("Enter the Gabor frequency", 0.08, float),
+            "theta": prompt_value("Enter the Gabor angle (in degrees)", 0.0, float),
+            "sigma_x": prompt_value("Enter the Gabor sigma_x", 5.0, float),
+            "sigma_y": prompt_value("Enter the Gabor sigma_y", 2.0, float),
         }
 
     textures = []
@@ -77,7 +86,7 @@ def userInputMode():
                 height=height,
                 width=width,
                 frequency=texture_parameters["frequency"],
-                theta=np.deg2rad(texture_parameters["theta"] + texture_rotation),
+                theta=np.deg2rad(texture_parameters["theta"]) + np.deg2rad(texture_rotation),
                 sigma_x=texture_parameters["sigma_x"],
                 sigma_y=texture_parameters["sigma_y"],
                 seed=image_seed,
@@ -93,6 +102,153 @@ def userInputMode():
 
     plt.show()
     return textures
+
+
+def userInputMode():
+    root = Tk.Tk()
+    root.title("Gabor Texture Generator")
+    root.geometry("620x760")
+
+    outer_frame = ttk.Frame(root, padding=12)
+    outer_frame.pack(fill="both", expand=True)
+
+    canvas = Tk.Canvas(outer_frame, highlightthickness=0)
+    scrollbar = ttk.Scrollbar(outer_frame, orient="vertical", command=canvas.yview)
+    form_frame = ttk.Frame(canvas)
+    canvas_window = canvas.create_window((0, 0), window=form_frame, anchor="nw")
+    canvas.configure(yscrollcommand=scrollbar.set)
+    canvas.pack(side="left", fill="both", expand=True)
+    scrollbar.pack(side="right", fill="y")
+
+    def update_scroll_region(_event=None):
+        canvas.configure(scrollregion=canvas.bbox("all"))
+
+    def resize_form(event):
+        canvas.itemconfigure(canvas_window, width=event.width)
+
+    form_frame.bind("<Configure>", update_scroll_region)
+    canvas.bind("<Configure>", resize_form)
+
+    ttk.Label(form_frame, text="Gabor Texture Generator", font=("TkDefaultFont", 16, "bold")).pack(anchor="w", pady=(0, 12))
+
+    general_defaults = {
+        "height": 512,
+        "width": 512,
+        "image_count": 1,
+        "texture_rotation": 0.0,
+        "seed": 42,
+    }
+    brick_defaults = {
+        "brick_width": 64,
+        "brick_height": 32,
+        "mortar_width": 2,
+        "mortar_height": 2,
+        "frequency": 0.08,
+        "theta": 0.0,
+        "sigma_x": 5.0,
+        "sigma_y": 2.0,
+        "vertical_frequency": 0.08,
+        "vertical_theta": 90.0,
+        "vertical_sigma_x": 5.0,
+        "vertical_sigma_y": 2.0,
+        "horizontal_weight": 0.7,
+        "vertical_weight": 0.3,
+        "mortar_frequency": 0.12,
+        "mortar_theta": 0.0,
+        "mortar_sigma_x": 2.0,
+        "mortar_sigma_y": 1.0,
+        "brick_base": 0.55,
+        "brick_contrast": 0.2,
+        "mortar_base": 0.25,
+        "mortar_contrast": 0.05,
+    }
+    simple_defaults = {
+        "frequency": 0.08,
+        "theta": 0.0,
+        "sigma_x": 5.0,
+        "sigma_y": 2.0,
+    }
+    variables = {}
+
+    def add_section(title):
+        section = ttk.LabelFrame(form_frame, text=title, padding=8)
+        section.pack(fill="x", pady=(0, 10))
+        return section
+
+    def add_field(section, name, label, default):
+        row = ttk.Frame(section)
+        row.pack(fill="x", pady=2)
+        ttk.Label(row, text=label).pack(side="left", anchor="w")
+        variable = Tk.StringVar(value=str(default))
+        variables[name] = variable
+        ttk.Entry(row, textvariable=variable, width=14).pack(side="right")
+
+    general_section = add_section("General")
+    texture_type = Tk.StringVar(value="brick")
+    ttk.Label(general_section, text="Texture type").pack(side="left", anchor="w")
+    ttk.Combobox(general_section, textvariable=texture_type, values=("brick", "grass", "gravel"), state="readonly", width=11).pack(side="right")
+    for name, default in general_defaults.items():
+        add_field(general_section, name, name.replace("_", " ").title(), default)
+
+    brick_section = add_section("Brick Parameters")
+    for name, default in brick_defaults.items():
+        add_field(brick_section, name, name.replace("_", " ").title(), default)
+
+    simple_section = add_section("Grass / Gravel Parameters")
+    for name, default in simple_defaults.items():
+        add_field(simple_section, name, name.replace("_", " ").title(), default)
+
+    status = Tk.StringVar(value="Ready")
+
+    def read_value(name, converter):
+        return converter(variables[name].get().strip())
+
+    def generate_from_form():
+        try:
+            height = read_value("height", int)
+            width = read_value("width", int)
+            image_count = read_value("image_count", int)
+            texture_rotation = read_value("texture_rotation", float)
+            seed = read_value("seed", int)
+            if height < 1 or width < 1 or image_count < 1:
+                raise ValueError("height, width, and image count must be positive")
+
+            selected_type = texture_type.get()
+            textures = []
+            for image_index in range(image_count):
+                image_seed = seed + image_index
+                if selected_type == "brick":
+                    parameters = {name: read_value(name, float if isinstance(default, float) else int) for name, default in brick_defaults.items()}
+                    parameters["theta"] = np.deg2rad(parameters["theta"])
+                    parameters["vertical_theta"] = np.deg2rad(parameters["vertical_theta"])
+                    parameters["mortar_theta"] = np.deg2rad(parameters["mortar_theta"])
+                    texture = make_brick_texture(height=height, width=width, texture_rotation=texture_rotation, seed=image_seed, **parameters)
+                else:
+                    parameters = {name: read_value(name, float) for name in simple_defaults}
+                    texture = (make_grass_texture if selected_type == "grass" else make_gravel_texture)(
+                        height=height,
+                        width=width,
+                        frequency=parameters["frequency"],
+                        theta=np.deg2rad(parameters["theta"] + texture_rotation),
+                        sigma_x=parameters["sigma_x"],
+                        sigma_y=parameters["sigma_y"],
+                        seed=image_seed,
+                    )
+                textures.append(texture)
+                plt.figure(figsize=(8, 8))
+                plt.imshow(texture, cmap="gray")
+                plt.title(f"{selected_type} {image_index + 1}")
+                plt.axis("off")
+                plt.tight_layout()
+            plt.show(block=False)
+            status.set(f"Generated {image_count} {selected_type} texture(s)")
+        except (TypeError, ValueError) as error:
+            messagebox.showerror("Invalid input", str(error), parent=root)
+            status.set("Invalid input")
+
+    ttk.Button(form_frame, text="Generate Textures", command=generate_from_form).pack(anchor="e", pady=(0, 8))
+    ttk.Label(form_frame, textvariable=status).pack(anchor="w")
+    root.mainloop()
     
 
 
@@ -283,29 +439,7 @@ def make_gravel_texture(
 
     return gravel_texture
 
-if __name__ == "__main__": 
-
-    mode = input("Enter 'input' to provide parameters or 'dataset' to use the GAN dataset: ")
-
-    if mode == 'input':
-        userInputMode()
-            
-
-    elif mode == 'dataset':
-        # Use the GAN dataset parameters
-        ## implemented when GAN gets written
-        texture_type = input("Enter the texture type (brick, grass, gravel): ")
-        if texture_type == 'brick':
-            pass
-        elif texture_type == 'grass':
-            pass
-        elif texture_type == 'gravel':
-            pass
-        else:
-            print("Invalid texture type. Please enter 'brick', 'grass', or 'gravel'.")
-            exit(1)
-    else:
-        print("Invalid mode selected. Please enter 'input' or 'dataset'.")
-        exit(1)
+if __name__ == "__main__":
+    userInputMode()
 
     
