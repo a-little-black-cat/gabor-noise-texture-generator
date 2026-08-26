@@ -199,6 +199,24 @@ def userInputMode():
         if file_path:
             print(f"Selected texture image: {file_path}")
 
+    
+
+        """
+        Values extracted from uploaded image:
+        frequency: {frequency}
+        theta: {theta}
+        sigma_x: {sigma_x}
+        sigma_y: {sigma_y}
+        color_mean: {color_mean}
+        color_std: {color_std}
+        specular_mean: {specular_mean}
+        specular_std: {specular_std}
+        uv_map: {uv_map} -> this can be used to create textures that match mesh shapes through uv mapping. It can be used to create textures that match the mesh shapes through uv mapping.
+        """
+
+        frequency, theta, sigma_x, sigma_y, color_mean, color_std, specular_mean, specular_std, uv_map = extractor.extract_gabor_parameters(file_path)
+
+
     general_section = add_section("General")
     texture_type = Tk.StringVar(value="brick")
     ttk.Label(general_section, text="Texture type").pack(side="left", anchor="w")
