@@ -11,7 +11,8 @@ import numpy as np
 from scipy import ndimage
 from skimage.filters import gabor_kernel
 import tkinter as Tk
-from tkinter import messagebox, ttk
+from tkinter import messagebox, ttk, filedialog
+import gabor_extractor as extractor
 
 
 def prompt_value(prompt, default, converter):
@@ -162,7 +163,14 @@ def userInputMode():
         "mortar_base": 0.25,
         "mortar_contrast": 0.05,
     }
-    simple_defaults = {
+    grass_defaults = {
+        "frequency": 0.08,
+        "theta": 0.0,
+        "sigma_x": 5.0,
+        "sigma_y": 2.0,
+    }
+
+    gravel_defaults = {
         "frequency": 0.08,
         "theta": 0.0,
         "sigma_x": 5.0,
@@ -183,6 +191,14 @@ def userInputMode():
         variables[name] = variable
         ttk.Entry(row, textvariable=variable, width=14).pack(side="right")
 
+    def upload_texture():
+        file_path = filedialog.askopenfilename(
+            title="Select Texture Image",
+            filetypes=[("Image Files", "*.png *.jpg *.jpeg *.bmp *.tiff")],
+        )
+        if file_path:
+            print(f"Selected texture image: {file_path}")
+
     general_section = add_section("General")
     texture_type = Tk.StringVar(value="brick")
     ttk.Label(general_section, text="Texture type").pack(side="left", anchor="w")
@@ -190,13 +206,21 @@ def userInputMode():
     for name, default in general_defaults.items():
         add_field(general_section, name, name.replace("_", " ").title(), default)
 
+    upload_texture_section = add_section("Upload Texture")
+    ttk.Label(upload_texture_section, text="Upload texture image").pack(side="left", anchor="w")
+    ttk.Button(upload_texture_section, text="Upload", command=upload_texture).pack(side="right")
+
     brick_section = add_section("Brick Parameters")
     for name, default in brick_defaults.items():
         add_field(brick_section, name, name.replace("_", " ").title(), default)
 
-    simple_section = add_section("Grass / Gravel Parameters")
-    for name, default in simple_defaults.items():
-        add_field(simple_section, name, name.replace("_", " ").title(), default)
+    grass_section = add_section("GrassParameters")
+    for name, default in grass_defaults.items():
+        add_field(grass_section, name, name.replace("_", " ").title(), default)
+
+    gravel_section = add_section("GravelParameters")
+    for name, default in gravel_defaults.items():
+        add_field(gravel_section, name, name.replace("_", " ").title(), default)
 
     status = Tk.StringVar(value="Ready")
 
@@ -223,8 +247,31 @@ def userInputMode():
                     parameters["vertical_theta"] = np.deg2rad(parameters["vertical_theta"])
                     parameters["mortar_theta"] = np.deg2rad(parameters["mortar_theta"])
                     texture = make_brick_texture(height=height, width=width, texture_rotation=texture_rotation, seed=image_seed, **parameters)
+
+                if selected_type == "grass":
+                    parameters = {name: read_value(name, float) for name in grass_defaults}
+                    texture = make_grass_texture(
+                        height=height,
+                        width=width,
+                        frequency=parameters["frequency"],
+                        theta=np.deg2rad(parameters["theta"] + texture_rotation),
+                        sigma_x=parameters["sigma_x"],
+                        sigma_y=parameters["sigma_y"],
+                        seed=image_seed,
+                    )
+                if selected_type == "gravel":
+                    parameters = {name: read_value(name, float) for name in gravel_defaults}
+                    texture = make_gravel_texture(
+                        height=height,
+                        width=width,
+                        frequency=parameters["frequency"],
+                        theta=np.deg2rad(parameters["theta"] + texture_rotation),
+                        sigma_x=parameters["sigma_x"],
+                        sigma_y=parameters["sigma_y"],
+                        seed=image_seed,
+                    )
                 else:
-                    parameters = {name: read_value(name, float) for name in simple_defaults}
+                    parameters = {name: read_value(name, float) for name in grass_defaults}
                     texture = (make_grass_texture if selected_type == "grass" else make_gravel_texture)(
                         height=height,
                         width=width,
