@@ -1,0 +1,106 @@
+{
+  "colors": [
+    {
+      "frequency": 0.2716827392578125,
+      "hsv": [
+        0.041666666666666664,
+        0.3333333333333333,
+        0.09411764705882353
+      ],
+      "hex": "#181210",
+      "rgb": [
+        24,
+        18,
+        16
+      ]
+    },
+    {
+      "frequency": 0.2349090576171875,
+      "hsv": [
+        0.06862745098039212,
+        0.24285714285714288,
+        0.27450980392156865
+      ],
+      "hex": "#463C35",
+      "rgb": [
+        70,
+        60,
+        53
+      ]
+    },
+    {
+      "frequency": 0.226470947265625,
+      "hsv": [
+        0.11594202898550722,
+        0.15032679738562094,
+        0.6
+      ],
+      "hex": "#999282",
+      "rgb": [
+        153,
+        146,
+        130
+      ]
+    },
+    {
+      "frequency": 0.218841552734375,
+      "hsv": [
+        0.09848484848484844,
+        0.19298245614035092,
+        0.4470588235294118
+      ],
+      "hex": "#72695C",
+      "rgb": [
+        114,
+        105,
+        92
+      ]
+    },
+    {
+      "frequency": 0.048095703125,
+      "hsv": [
+        0.0944444444444444,
+        0.13888888888888892,
+        0.8470588235294118
+      ],
+      "hex": "#D8CBBA",
+      "rgb": [
+        216,
+        203,
+        186
+      ]
+    }
+  ],
+  "palette_size": 5,
+  "colorspace": "hsv",
+  "metadata": {
+    "image_source": "C:/Users/beren/Downloads/kismet-and-i-before.jpg",
+    "source_type": "file_path",
+    "extraction_params": {
+      "palette_size": 5,
+      "mode": "KMeans",
+      "sort_mode": null,
+      "resize": 256,
+      "alpha_mask_threshold": 0
+    },
+    "image_info": {
+      "original_size": [
+        900,
+        1600
+      ],
+      "processed_size": [
+        256,
+        256
+      ],
+      "format": "JPEG",
+      "mode": "RGBA",
+      "has_alpha": true
+    },
+    "processing_stats": {
+      "total_pixels": 65536,
+      "valid_pixels": 65536,
+      "extraction_time": 3.2172930240631104,
+      "timestamp": "2026-08-27T10:31:31.524487"
+    }
+  }
+}

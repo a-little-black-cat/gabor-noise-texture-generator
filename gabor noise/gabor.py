@@ -11,6 +11,7 @@ import numpy as np
 from scipy import ndimage
 from skimage.filters import gabor_kernel
 import tkinter as Tk
+import csv
 from tkinter import messagebox, ttk, filedialog
 import gabor_extractor as extractor
 
@@ -241,11 +242,35 @@ def userInputMode():
         add_field(gravel_section, name, name.replace("_", " ").title(), default)
 
     status = Tk.StringVar(value="Ready")
+    generated_textures = []
+    results_figure = None
 
     def read_value(name, converter):
         return converter(variables[name].get().strip())
 
+    def export_textures():
+        if not generated_textures:
+            messagebox.showinfo("No results", "Generate at least one texture first.", parent=root)
+            return
+
+        file_path = filedialog.asksaveasfilename(
+            title="Export texture data",
+            defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv")],
+        )
+        if not file_path:
+            return
+
+        with open(file_path, "w", newline="", encoding="utf-8") as csv_file:
+            writer = csv.writer(csv_file)
+            writer.writerow(("image", "row", "column", "intensity"))
+            for image_index, texture in enumerate(generated_textures, start=1):
+                for row, column in np.ndindex(texture.shape):
+                    writer.writerow((image_index, row, column, float(texture[row, column])))
+        status.set(f"Exported {len(generated_textures)} texture(s) to CSV")
+
     def generate_from_form():
+        nonlocal results_figure
         try:
             height = read_value("height", int)
             width = read_value("width", int)
@@ -266,7 +291,7 @@ def userInputMode():
                     parameters["mortar_theta"] = np.deg2rad(parameters["mortar_theta"])
                     texture = make_brick_texture(height=height, width=width, texture_rotation=texture_rotation, seed=image_seed, **parameters)
 
-                if selected_type == "grass":
+                elif selected_type == "grass":
                     parameters = {name: read_value(name, float) for name in grass_defaults}
                     texture = make_grass_texture(
                         height=height,
@@ -277,7 +302,7 @@ def userInputMode():
                         sigma_y=parameters["sigma_y"],
                         seed=image_seed,
                     )
-                if selected_type == "gravel":
+                else:
                     parameters = {name: read_value(name, float) for name in gravel_defaults}
                     texture = make_gravel_texture(
                         height=height,
@@ -288,30 +313,29 @@ def userInputMode():
                         sigma_y=parameters["sigma_y"],
                         seed=image_seed,
                     )
-                else:
-                    parameters = {name: read_value(name, float) for name in grass_defaults}
-                    texture = (make_grass_texture if selected_type == "grass" else make_gravel_texture)(
-                        height=height,
-                        width=width,
-                        frequency=parameters["frequency"],
-                        theta=np.deg2rad(parameters["theta"] + texture_rotation),
-                        sigma_x=parameters["sigma_x"],
-                        sigma_y=parameters["sigma_y"],
-                        seed=image_seed,
-                    )
                 textures.append(texture)
-                plt.figure(figsize=(8, 8))
-                plt.imshow(texture, cmap="gray")
-                plt.title(f"{selected_type} {image_index + 1}")
-                plt.axis("off")
-                plt.tight_layout()
-            plt.show(block=False)
+            generated_textures[:] = textures
+            if results_figure is not None:
+                plt.close(results_figure)
+            columns = min(4, max(1, image_count))
+            rows = int(np.ceil(image_count / columns))
+            results_figure, axes = plt.subplots(rows, columns, squeeze=False, figsize=(4 * columns, 4 * rows))
+            for image_index, texture in enumerate(textures):
+                axis = axes.flat[image_index]
+                axis.imshow(texture, cmap="gray", vmin=0, vmax=1)
+                axis.set_title(f"{selected_type} {image_index + 1}")
+                axis.axis("off")
+            for axis in axes.flat[image_count:]:
+                axis.axis("off")
+            results_figure.tight_layout()
+            results_figure.show()
             status.set(f"Generated {image_count} {selected_type} texture(s)")
         except (TypeError, ValueError) as error:
             messagebox.showerror("Invalid input", str(error), parent=root)
             status.set("Invalid input")
 
     ttk.Button(form_frame, text="Generate Textures", command=generate_from_form).pack(anchor="e", pady=(0, 8))
+    ttk.Button(form_frame, text="Export Results as CSV", command=export_textures).pack(anchor="e", pady=(0, 8))
     ttk.Label(form_frame, textvariable=status).pack(anchor="w")
     root.mainloop()
     
