@@ -8,9 +8,14 @@ from skimage import img_as_float, data
 import numpy as np
 import matplotlib.pyplot as plt
 import cv2 as cv
+
 import csv
+import texturize as txt
 from scipy import ndimage as ndi
+from scipy.optimize import curve_fit
+
 from pylette import extract_colors
+
 
 def export_gabor_kernels_csv(kernels, file_path):
     """Export kernel coefficients as one row per coefficient."""
@@ -24,7 +29,19 @@ def export_gabor_kernels_csv(kernels, file_path):
 
 
 def extract_gabor_parameters(image):
+
     # "frequency, theta, sigma_x, sigma_y, color_mean, color_std, specular_mean, specular_std, uv_map = extractor.extract_gabor_parameters(file_path)" 
+
+    #get image from filepath
+    image = cv.imread(image)
+
+    image_float = image.astype(np.float32) / 255.0 # Convert image to float32 and normalize to [0, 1]
+
+    gray_image = make_image_grayscale(image_float) # for easier analysis, convert to grayscale if not already
+    power_spectrum = get_power_spectrum(gray_image) # visualize the power spectrum of the image
+
+    #get orientation and frequency from power spectrum
+    orientation, frequency, amplitude, offset = extract_sinusoidal_parameters(power_spectrum) # Placeholder for extracting sinusoidal parameters
 
     # prepare filter bank kernels using opencv gabor ekrnel
     ksize = 31 # Size of the filter returned. || I want to modify and see how this affects
@@ -34,8 +51,20 @@ def extract_gabor_parameters(image):
     theta_range = np.arange(0, np.pi, np.pi / 4) # Orientation of the normal to the parallel stripes of a Gabor function.
     frequency_range = [0.05, 0.25] # Frequency of the sinusoidal factor.
     phase = 0 # Phase offset.
+    kernels = [] # List to hold the generated kernels
 
-    kernels = []
+    #
+
+
+    
+
+
+
+
+
+
+
+    """
     for theta in theta_range:
         for frequency in frequency_range:
             kernel = cv.getGaborKernel((ksize, ksize), sigma, theta, 1.0 / frequency, 1.0, phase, ktype=ktype)
@@ -58,6 +87,7 @@ def extract_gabor_parameters(image):
 
     for kernel in kernels:
             yield kernel
+    """
 
     color_mean = get_color_mean(image)
     color_std = get_color_std(image)
@@ -71,8 +101,67 @@ def extract_gabor_parameters(image):
 
     yield frequency, theta, sigma_x, sigma_y, color_mean, color_std, specular_mean, specular_std, uv_map
 
+def compute_feats(image, kernels):
+    # Compute the features for an image using a set of Gabor kernels.
+    feats = np.zeros((len(kernels), 2), dtype=np.double)
+    # Compute the features for each kernel
+    for k, kernel in enumerate(kernels):
+        filtered = ndi.convolve(image, kernel, mode='wrap') 
+        feats[k, 0] = filtered.mean() # Mean of the filtered image
+        feats[k, 1] = filtered.var() # Variance of the filtered image
+    return feats
+
+def make_image_grayscale(image):
+    # Convert the image to grayscale if it is not already
+    if len(image.shape) == 3 and image.shape[2] == 3:
+        return cv.cvtColor(image, cv.COLOR_BGR2GRAY)
+    return image
+
+
+def get_power_spectrum(image):
+    #power spectrum is the squared magnitude of the Fourier transform of the image
+    f_transform = np.fft.fft2(image)
+    f_shift = np.fft.fftshift(f_transform) # Shift the zero frequency component to the center of the spectrum
+    power_spectrum = np.abs(f_shift) ** 2
+
+    return power_spectrum
+
+def exract_gaussian_parameters(image):
+    # Placeholder for extracting Gaussian parameters from the image.
+    # This function can be implemented to analyze the image and extract relevant Gaussian parameters.
+    return None
+
+def extract_sinusoidal_parameters(image):
+    #extract sinusoidal parameters from the image using curve fitting
+    x_data = np.arange(image.shape[1]) # x_data is the column indices of the image
+    y_data = np.arange(image.shape[0]) # y_data is the row indices of the image
+
+    # Fit a sinusoidal curve to the data
+    params = fit_sinusoidal_curve(x_data, y_data)
+
+    # Extract the parameters
+    amplitude, frequency, phase, offset = params
+
+    # Calculate the orientation (in radians)
+    orientation = phase
+
+
+    return orientation, frequency, amplitude, offset
+
+def sinusoidal_function(x, amplitude, frequency, phase, offset):
+    func = amplitude * np.sin(2 * np.pi * frequency * x + phase) + offset
+    return func
+
+def fit_sinusoidal_curve(x_data, y_data):
+    # Fit a sinusoidal curve to the given data using curve fitting.
+    initial_guess = [1, 0.1, 0, 0]  # Initial guess for amplitude, frequency, phase, offset
+
+    params, _ = curve_fit(sinusoidal_function, x_data, y_data, p0=initial_guess)
+    return params  # Returns the fitted parameters: amplitude, frequency, phase, offset
+
+
 def get_color_mean(image):
-    # actually what if i extract a color palette
+    # actually... what if i extract a color palette
 
     #color_mean = np.mean(image, axis=(0, 1))  # Mean color across the image
 

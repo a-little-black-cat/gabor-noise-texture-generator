@@ -241,6 +241,10 @@ def userInputMode():
     for name, default in gravel_defaults.items():
         add_field(gravel_section, name, name.replace("_", " ").title(), default)
 
+    rock_section = add_section("Rock Parameters")
+    for name, default in rock_defaults.items():
+        add_field(rock_section, name, name.replace("_", " ").title(), default)
+
     status = Tk.StringVar(value="Ready")
     generated_textures = []
     results_figure = None
@@ -482,6 +486,7 @@ def make_brick_texture(
 
     return np.clip(texture, 0.0, 1.0)
 
+#gotta differentiate between calculations of grass and gravel here onwards womp
 def make_grass_texture(
     height,
     width,
@@ -527,6 +532,29 @@ def make_gravel_texture(
     gravel_texture = normalize(gravel_noise)
 
     return gravel_texture
+
+def make_rock_texture(
+    height,
+    width,
+    frequency,
+    theta,
+    sigma_x,
+    sigma_y,
+    seed,
+):
+    rock_noise = make_gabor_noise(
+        height=height,
+        width=width,
+        frequency=frequency,
+        theta=theta,
+        sigma_x=sigma_x,
+        sigma_y=sigma_y,
+        seed=seed,
+    )
+
+    rock_texture = normalize(rock_noise)
+
+    return rock_texture
 
 if __name__ == "__main__":
     userInputMode()
