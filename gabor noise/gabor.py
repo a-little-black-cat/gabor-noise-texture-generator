@@ -177,6 +177,15 @@ def userInputMode():
         "sigma_x": 5.0,
         "sigma_y": 2.0,
     }
+
+    rock_defaults = { #LIKELY to be converted into woronoi tessellation or something similar -- might be combined with proc. rock generator in future
+        "frequency": 0.08,  
+        "theta": 0.0,
+        "sigma_x": 5.0,
+        "sigma_y": 2.0,
+    }
+
+
     variables = {}
 
     def add_section(title):
@@ -306,9 +315,22 @@ def userInputMode():
                         sigma_y=parameters["sigma_y"],
                         seed=image_seed,
                     )
-                else:
+
+                elif selected_type == "gravel":
+                
                     parameters = {name: read_value(name, float) for name in gravel_defaults}
                     texture = make_gravel_texture(
+                        height=height,
+                        width=width,
+                        frequency=parameters["frequency"],
+                        theta=np.deg2rad(parameters["theta"] + texture_rotation),
+                        sigma_x=parameters["sigma_x"],
+                        sigma_y=parameters["sigma_y"],
+                        seed=image_seed,
+                    )
+                elif selected_type == "rock":
+                    parameters = {name: read_value(name, float) for name in rock_defaults}
+                    texture = make_rock_texture(
                         height=height,
                         width=width,
                         frequency=parameters["frequency"],

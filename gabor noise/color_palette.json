@@ -99,8 +99,8 @@
     "processing_stats": {
       "total_pixels": 65536,
       "valid_pixels": 65536,
-      "extraction_time": 0.01856708526611328,
-      "timestamp": "2026-09-02T13:25:45.637120"
+      "extraction_time": 0.8249976634979248,
+      "timestamp": "2026-09-02T15:41:35.103107"
     }
   }
 }
