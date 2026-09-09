@@ -217,6 +217,7 @@ def userInputMode():
             print(f"Selected texture image: {file_path}")
             try:
                 extracted = extractor.extract_gabor_parameters(file_path)
+                
                 uploaded_parameters = extracted
                 uploaded_image = np.asarray(
                     Image.open(file_path).convert("RGB"), dtype=np.float32
@@ -245,14 +246,40 @@ def userInputMode():
         variation_window.geometry("980x760")
         variation_window.columnconfigure(0, weight=1)
         variation_window.rowconfigure(0, weight=1)
+        content_frame = ttk.Frame(variation_window)
+        content_frame.grid(row=0, column=0, sticky="nsew")
+        content_frame.columnconfigure(0, weight=1)
+        content_frame.rowconfigure(1, weight=1)
+        header_frame = ttk.Frame(content_frame)
+        header_frame.grid(row=0, column=0, columnspan=2, sticky="ew")
 
-        canvas = Tk.Canvas(variation_window, highlightthickness=0)
-        scrollbar = ttk.Scrollbar(variation_window, orient="vertical", command=canvas.yview)
+        #get extracted parameters from uploaded image and display them in the variation window
+        if uploaded_parameters:
+            for i, param in enumerate(uploaded_parameters["components"]):
+                ttk.Label(header_frame, text=f"Component {i + 1}: Frequency={param['frequency']:.6g}, Theta={np.rad2deg(param['theta']):.3f}, Sigma_X={param['sigma_x']:.6g}, Sigma_Y={param['sigma_y']:.6g}").grid(row=i, column=0, sticky="w", padx=12)
+
+            palette_frame = ttk.LabelFrame(header_frame, text="Extracted Color Palette", padding=8)
+            palette_frame.grid(row=len(uploaded_parameters["components"]), column=0, sticky="ew", padx=12, pady=(8, 12))
+            for j, color in enumerate(uploaded_parameters["palette"]):
+                red, green, blue = color["rgb"]
+                color_frame = ttk.Frame(palette_frame, padding=4)
+                color_frame.grid(row=j // 4, column=j % 4, padx=6, pady=4, sticky="w")
+                swatch = Tk.Frame(color_frame, width=56, height=32, bg=color["hex"], relief="solid", borderwidth=1)
+                swatch.pack()
+                swatch.pack_propagate(False)
+                ttk.Label(
+                    color_frame,
+                    text=f"{j + 1}: RGB=({red}, {green}, {blue})\n{color['hex']}  {color['frequency']:.1%}",
+                    justify="left",
+                ).pack(pady=(4, 0))
+
+        canvas = Tk.Canvas(content_frame, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(content_frame, orient="vertical", command=canvas.yview)
         grid_frame = ttk.Frame(canvas, padding=12)
         canvas_window = canvas.create_window((0, 0), window=grid_frame, anchor="nw")
         canvas.configure(yscrollcommand=scrollbar.set)
-        canvas.grid(row=0, column=0, sticky="nsew")
-        scrollbar.grid(row=0, column=1, sticky="ns")
+        canvas.grid(row=1, column=0, sticky="nsew")
+        scrollbar.grid(row=1, column=1, sticky="ns")
 
         def update_scroll_region(_event=None):
             canvas.configure(scrollregion=canvas.bbox("all"))
@@ -704,6 +731,7 @@ def make_gravel_texture(
     gravel_texture = normalize(gravel_noise)
 
     return gravel_texture
+
 
 def make_rock_texture(
     height,

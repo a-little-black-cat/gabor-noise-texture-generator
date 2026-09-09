@@ -6,6 +6,7 @@ import cv2 as cv
 import numpy as np
 from scipy import ndimage as ndi
 from skimage.filters import gabor_kernel
+from pylette import extract_colors
 
 
 def export_gabor_kernels_csv(kernels, file_path):
@@ -67,6 +68,12 @@ def extract_gabor_parameters(image, max_components=8):
     luminance = cv.cvtColor(image_float, cv.COLOR_BGR2GRAY)
     highlights = np.clip(luminance - 0.8, 0.0, 0.2) / 0.2
     primary = components[0]
+    palette_image = np.clip(rgb * 255.0, 0.0, 255.0).astype(np.uint8)
+    palette = extract_palette_from_image(palette_image, max_num_colors=8)
+    
+
+
+
     return {
         "frequency": primary["frequency"],
         "theta": primary["theta"],
@@ -82,6 +89,15 @@ def extract_gabor_parameters(image, max_components=8):
         "specular_std": float(np.std(highlights)),
         "image_size": {"height": int(source.shape[0]), "width": int(source.shape[1])},
         "uv_map": None,
+        "palette": [
+            {
+                "rgb": color.rgb,
+                "hex": color.hex,
+                "hsv": color.hsv,
+                "frequency": float(color.frequency),
+            }
+            for color in palette.colors
+        ],
     }
 
 
@@ -92,6 +108,16 @@ def compute_feats(image, kernels):
         filtered = ndi.convolve(image, kernel, mode="wrap")
         feats[index] = filtered.mean(), filtered.var()
     return feats
+
+def extract_palette_from_image(image, max_num_colors=8):
+    palette = extract_colors(image, max_num_colors)
+    for color in palette.colors:
+        print(f"RGB: {color.rgb}")
+        print(f"Hex: {color.hex}")
+        print(f"HSV: {color.hsv}")
+        print(f"Frequency: {color.frequency:.2%}")
+    palette.to_json(filename="palette.json", colorspace='hsv')
+    return palette
 
 def create_color_variation(image, color_mean, color_std):
     """Create a color variation of an image based on mean and std deviation."""
