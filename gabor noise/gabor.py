@@ -168,10 +168,10 @@ def userInputMode():
     }
     
     grass_defaults = {
-        "frequency": 0.08,
+        "frequency": 0.055,
         "theta": 0.0,
-        "sigma_x": 5.0,
-        "sigma_y": 2.0,
+        "sigma_x": 7.0,
+        "sigma_y": 1.2,
     }
 
     gravel_defaults = {
@@ -325,6 +325,16 @@ def userInputMode():
                     )
                 perturbation = normalize(combined)[..., None] - 0.5
                 texture = np.clip(texture + perturbation * 0.12, 0.0, 1.0)
+
+                # Vary the RGB distribution while preserving the crop's spatial detail.
+                base_mean = np.asarray(uploaded_parameters["color_mean"], dtype=np.float32)
+                base_std = np.asarray(uploaded_parameters["color_std"], dtype=np.float32)
+                target_mean = np.clip(base_mean + rng.normal(0.0, 0.025, 3), 0.0, 1.0)
+                target_std = np.maximum(base_std * rng.uniform(0.9, 1.1, 3), 0.005)
+                texture_uint8 = extractor.create_color_variation(
+                    np.uint8(texture * 255.0), target_mean, target_std
+                )
+                texture = texture_uint8.astype(np.float32) / 255.0
                 textures.append(texture)
             generated_textures[:] = textures
             show_variations(textures)
@@ -633,19 +643,44 @@ def make_grass_texture(
     sigma_y,
     seed,
 ):
-    grass_noise = make_gabor_noise(
+    rng = np.random.default_rng(seed)
+    density = np.clip(frequency * 1.8, 0.035, 0.18)
+    impulse_field = (rng.random((height, width)) < density).astype(np.float32)
+
+    # Blur sparse impulses into elongated strands in the requested direction.
+    aligned = ndimage.rotate(
+        impulse_field,
+        angle=-np.rad2deg(theta),
+        reshape=False,
+        order=1,
+        mode="reflect",
+    )
+    strands = ndimage.gaussian_filter(
+        aligned,
+        sigma=(max(sigma_y, 0.5), max(sigma_x, 0.5)),
+        mode="wrap",
+    )
+    strands = ndimage.rotate(
+        strands,
+        angle=np.rad2deg(theta),
+        reshape=False,
+        order=1,
+        mode="reflect",
+    )
+    strands = normalize(strands)
+
+    broad_variation = make_gabor_noise(
         height=height,
         width=width,
-        frequency=frequency,
+        frequency=max(frequency * 0.45, 0.015),
         theta=theta,
-        sigma_x=sigma_x,
-        sigma_y=sigma_y,
-        seed=seed,
+        sigma_x=max(sigma_x * 1.5, 2.0),
+        sigma_y=max(sigma_y, 1.0),
+        seed=seed + 1,
     )
-
-    grass_texture = normalize(grass_noise)
-
-    return grass_texture
+    broad_variation = normalize(broad_variation)
+    grass_texture = 0.12 + 0.68 * strands + 0.20 * broad_variation
+    return np.clip(grass_texture, 0.0, 1.0)
 
 def make_gravel_texture(
     height,

@@ -92,3 +92,27 @@ def compute_feats(image, kernels):
         filtered = ndi.convolve(image, kernel, mode="wrap")
         feats[index] = filtered.mean(), filtered.var()
     return feats
+
+def create_color_variation(image, color_mean, color_std):
+    """Create a color variation of an image based on mean and std deviation."""
+    if image.ndim != 3 or image.shape[2] != 3:
+        raise ValueError("Input image must be a color image with 3 channels.")
+    
+    # Convert to float32 for processing
+    image_float = image.astype(np.float32) / 255.0
+    
+    # Calculate current mean and std deviation
+    current_mean = np.mean(image_float, axis=(0, 1))
+    current_std = np.std(image_float, axis=(0, 1))
+    
+    # Normalize the image
+    normalized_image = (image_float - current_mean) / (current_std + 1e-8)
+    
+    # Apply new mean and std deviation
+    new_image = normalized_image * color_std + color_mean
+    
+    # Clip values to [0, 1] range and convert back to uint8
+    new_image_clipped = np.clip(new_image, 0.0, 1.0)
+    return (new_image_clipped * 255).astype(np.uint8)
+
+
