@@ -13,6 +13,7 @@ from skimage.filters import gabor_kernel
 import tkinter as Tk
 import csv
 from tkinter import messagebox, ttk, filedialog
+from PIL import Image, ImageTk
 import gabor_extractor as extractor
 
 
@@ -136,6 +137,7 @@ def userInputMode():
     general_defaults = {
         "height": 512,
         "width": 512,
+        "variation_size": 512,
         "image_count": 1,
         "texture_rotation": 0.0,
         "seed": 42,
@@ -164,6 +166,7 @@ def userInputMode():
         "mortar_base": 0.25,
         "mortar_contrast": 0.05,
     }
+    
     grass_defaults = {
         "frequency": 0.08,
         "theta": 0.0,
@@ -187,6 +190,9 @@ def userInputMode():
 
 
     variables = {}
+    uploaded_parameters = None
+    uploaded_image = None
+    variation_window = None
 
     def add_section(title):
         section = ttk.LabelFrame(form_frame, text=title, padding=8)
@@ -198,33 +204,134 @@ def userInputMode():
         row.pack(fill="x", pady=2)
         ttk.Label(row, text=label).pack(side="left", anchor="w")
         variable = Tk.StringVar(value=str(default))
-        variables[name] = variable
+        variables.setdefault(name, []).append(variable)
         ttk.Entry(row, textvariable=variable, width=14).pack(side="right")
 
     def upload_texture():
+        nonlocal uploaded_parameters, uploaded_image
         file_path = filedialog.askopenfilename(
             title="Select Texture Image",
             filetypes=[("Image Files", "*.png *.jpg *.jpeg *.bmp *.tiff")],
         )
         if file_path:
             print(f"Selected texture image: {file_path}")
+            try:
+                extracted = extractor.extract_gabor_parameters(file_path)
+                uploaded_parameters = extracted
+                uploaded_image = np.asarray(
+                    Image.open(file_path).convert("RGB"), dtype=np.float32
+                ) / 255.0
+                for name in ("frequency", "sigma_x", "sigma_y"):
+                    for variable in variables[name]:
+                        variable.set(f"{extracted[name]:.6g}")
+                for variable in variables["theta"]:
+                    variable.set(f"{np.rad2deg(extracted['theta']):.3f}")
+                status.set(
+                    f"Extracted {len(extracted['components'])} noise components "
+                    f"from {extracted['image_size']['width']}x{extracted['image_size']['height']} image"
+                )
+                print(extracted)
+            except (OSError, ValueError) as error:
+                messagebox.showerror("Texture extraction failed", str(error), parent=root)
+                status.set("Texture extraction failed")
 
-    
+    def show_variations(textures):
+        nonlocal variation_window
+        if variation_window is not None and variation_window.winfo_exists():
+            variation_window.destroy()
 
-        """
-        Values extracted from uploaded image:
-        frequency: {frequency}
-        theta: {theta}
-        sigma_x: {sigma_x}
-        sigma_y: {sigma_y}
-        color_mean: {color_mean}
-        color_std: {color_std}
-        specular_mean: {specular_mean}
-        specular_std: {specular_std}
-        uv_map: {uv_map} -> this can be used to create textures that match mesh shapes through uv mapping. It can be used to create textures that match the mesh shapes through uv mapping.
-        """
+        variation_window = Tk.Toplevel(root)
+        variation_window.title("Uploaded Texture Variations")
+        variation_window.geometry("980x760")
+        variation_window.columnconfigure(0, weight=1)
+        variation_window.rowconfigure(0, weight=1)
 
-        frequency, theta, sigma_x, sigma_y, color_mean, color_std, specular_mean, specular_std, uv_map = extractor.extract_gabor_parameters(file_path)
+        canvas = Tk.Canvas(variation_window, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(variation_window, orient="vertical", command=canvas.yview)
+        grid_frame = ttk.Frame(canvas, padding=12)
+        canvas_window = canvas.create_window((0, 0), window=grid_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.grid(row=0, column=0, sticky="nsew")
+        scrollbar.grid(row=0, column=1, sticky="ns")
+
+        def update_scroll_region(_event=None):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        def resize_grid(event):
+            canvas.itemconfigure(canvas_window, width=event.width)
+
+        grid_frame.bind("<Configure>", update_scroll_region)
+        canvas.bind("<Configure>", resize_grid)
+        photos = []
+        for index, texture in enumerate(textures):
+            image = Image.fromarray(np.uint8(np.clip(texture, 0.0, 1.0) * 255.0))
+            image.thumbnail((220, 220), Image.Resampling.LANCZOS)
+            photo = ImageTk.PhotoImage(image)
+            photos.append(photo)
+            card = ttk.Frame(grid_frame, padding=6)
+            card.grid(row=index // 4, column=index % 4, padx=6, pady=6, sticky="nsew")
+            ttk.Label(card, image=photo).pack()
+            ttk.Label(card, text=f"Variation {index + 1}").pack(pady=(4, 0))
+        variation_window._photos = photos
+
+    def generate_uploaded_variations():
+        try:
+            if uploaded_parameters is None or uploaded_image is None:
+                raise ValueError("Upload a texture before generating variations")
+            size = read_value("variation_size", int)
+            image_count = read_value("image_count", int)
+            seed = read_value("seed", int)
+            rotation = np.deg2rad(read_value("texture_rotation", float))
+            if size < 1 or image_count < 1:
+                raise ValueError("variation size and image count must be positive")
+
+            components = uploaded_parameters["components"]
+            energies = np.asarray([component["energy"] for component in components])
+            weights = energies / (energies.sum() + 1e-8)
+            textures = []
+            for image_index in range(image_count):
+                rng = np.random.default_rng(seed + image_index)
+                source_height, source_width = uploaded_image.shape[:2]
+                scale = max(size / source_height, size / source_width)
+                scale *= rng.uniform(1.0, 1.2)
+                resized = Image.fromarray(np.uint8(uploaded_image * 255.0)).resize(
+                    (max(size, int(source_width * scale)), max(size, int(source_height * scale))),
+                    Image.Resampling.BICUBIC,
+                )
+                max_x = resized.width - size
+                max_y = resized.height - size
+                crop_x = int(rng.integers(0, max_x + 1))
+                crop_y = int(rng.integers(0, max_y + 1))
+                crop = resized.crop((
+                    crop_x,
+                    crop_y,
+                    crop_x + size,
+                    crop_y + size,
+                ))
+                if rng.random() < 0.5:
+                    crop = crop.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
+                if rng.random() < 0.5:
+                    crop = crop.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
+                crop = crop.rotate(np.rad2deg(rotation), resample=Image.Resampling.BICUBIC)
+                texture = np.asarray(crop, dtype=np.float32) / 255.0
+
+                combined = np.zeros((size, size), dtype=np.float32)
+                for component_index, (component, weight) in enumerate(zip(components, weights)):
+                    combined += weight * make_gabor_noise(
+                        size, size, component["frequency"],
+                        component["theta"] + rotation,
+                        component["sigma_x"], component["sigma_y"],
+                        seed + image_index * len(components) + component_index,
+                    )
+                perturbation = normalize(combined)[..., None] - 0.5
+                texture = np.clip(texture + perturbation * 0.12, 0.0, 1.0)
+                textures.append(texture)
+            generated_textures[:] = textures
+            show_variations(textures)
+            status.set(f"Generated {image_count} uploaded-texture variation(s) at {size}x{size}")
+        except (TypeError, ValueError) as error:
+            messagebox.showerror("Variation generation failed", str(error), parent=root)
+            status.set("Variation generation failed")
 
 
     general_section = add_section("General")
@@ -237,6 +344,11 @@ def userInputMode():
     upload_texture_section = add_section("Upload Texture")
     ttk.Label(upload_texture_section, text="Upload texture image").pack(side="left", anchor="w")
     ttk.Button(upload_texture_section, text="Upload", command=upload_texture).pack(side="right")
+    ttk.Button(
+        upload_texture_section,
+        text="Generate Uploaded Variations",
+        command=generate_uploaded_variations,
+    ).pack(side="right", padx=(0, 8))
 
     brick_section = add_section("Brick Parameters")
     for name, default in brick_defaults.items():
@@ -259,7 +371,7 @@ def userInputMode():
     results_figure = None
 
     def read_value(name, converter):
-        return converter(variables[name].get().strip())
+        return converter(variables[name][0].get().strip())
 
     def export_textures():
         if not generated_textures:
@@ -279,7 +391,10 @@ def userInputMode():
             writer.writerow(("image", "row", "column", "intensity"))
             for image_index, texture in enumerate(generated_textures, start=1):
                 for row, column in np.ndindex(texture.shape):
-                    writer.writerow((image_index, row, column, float(texture[row, column])))
+                    value = texture[row, column]
+                    if np.ndim(value) > 0:
+                        value = np.mean(value)
+                    writer.writerow((image_index, row, column, float(value)))
         status.set(f"Exported {len(generated_textures)} texture(s) to CSV")
 
     def generate_from_form():
