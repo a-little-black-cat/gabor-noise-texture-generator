@@ -288,70 +288,7 @@ def userInputMode():
         variation_window._photos = photos
 
     # No parameters; generates variations using the uploaded image and extracted data.
-    def generate_uploaded_variations():
-        try:
-            if uploaded_parameters is None or uploaded_image is None:
-                raise ValueError("Upload a texture before generating variations")
-            size = read_value("variation_size", int)
-            image_count = read_value("image_count", int)
-            seed = read_value("seed", int)
-            rotation = np.deg2rad(read_value("texture_rotation", float))
-            if size < 1 or image_count < 1:
-                raise ValueError("variation size and image count must be positive")
-
-            components = uploaded_parameters["components"]
-            energies = np.asarray([component["energy"] for component in components])
-            weights = energies / (energies.sum() + 1e-8)
-            textures = []
-            for image_index in range(image_count):
-                rng = np.random.default_rng(seed + image_index)
-                source_height, source_width = uploaded_image.shape[:2]
-                scale = max(size / source_height, size / source_width)
-                scale *= rng.uniform(1.0, 1.2)
-                resized = Image.fromarray(np.uint8(uploaded_image * 255.0)).resize(
-                    (max(size, int(source_width * scale)), max(size, int(source_height * scale))),
-                    Image.Resampling.BICUBIC,
-                )
-                max_x = resized.width - size
-                max_y = resized.height - size
-                crop_x = int(rng.integers(0, max_x + 1))
-                crop_y = int(rng.integers(0, max_y + 1))
-                crop = resized.crop((
-                    crop_x,
-                    crop_y,
-                    crop_x + size,
-                    crop_y + size,
-                ))
-                if rng.random() < 0.5:
-                    crop = crop.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
-                if rng.random() < 0.5:
-                    crop = crop.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
-                crop = crop.rotate(np.rad2deg(rotation), resample=Image.Resampling.BICUBIC)
-                texture = np.asarray(crop, dtype=np.float32) / 255.0
-
-                combined = np.zeros((size, size), dtype=np.float32)
-                for component_index, (component, weight) in enumerate(zip(components, weights)):
-                    combined += weight * make_gabor_noise(
-                        size, size, component["frequency"],
-                        component["theta"] + rotation,
-                        component["sigma_x"], component["sigma_y"],
-                        seed + image_index * len(components) + component_index,
-                    )
-                perturbation = normalize(combined)[..., None] - 0.5
-                texture = np.clip(texture + perturbation * 0.12, 0.0, 1.0)
-
-                # Reuse colors extracted from the uploaded image.
-                texture_uint8 = extractor.create_color_variation(
-                    np.uint8(texture * 255.0), palette=uploaded_parameters["palette"]
-                )
-                texture = texture_uint8.astype(np.float32) / 255.0
-                textures.append(texture)
-            generated_textures[:] = textures
-            show_variations(textures)
-            status.set(f"Generated {image_count} uploaded-texture variation(s) at {size}x{size}")
-        except (TypeError, ValueError) as error:
-            messagebox.showerror("Variation generation failed", str(error), parent=root)
-            status.set("Variation generation failed")
+    
 
 
     general_section = add_section("General")
@@ -367,7 +304,7 @@ def userInputMode():
     ttk.Button(
         upload_texture_section,
         text="Generate Uploaded Variations",
-        command=generate_uploaded_variations,
+        command=lambda: generate_synthesized_variations(),
     ).pack(side="right", padx=(0, 8))
 
     brick_section = add_section("Brick Parameters")
@@ -394,6 +331,105 @@ def userInputMode():
     # converter: Callable that converts the field text to the required type.
     def read_value(name, converter):
         return converter(variables[name][0].get().strip())
+
+    # No parameters; synthesizes and displays variations from uploaded Gabor lobes.
+    def generate_synthesized_variations():
+        try:
+            if uploaded_parameters is None or uploaded_image is None:
+                raise ValueError("Upload a texture before generating variations")
+
+            size = read_value("variation_size", int)
+            image_count = read_value("image_count", int)
+            seed = read_value("seed", int)
+            if size < 1 or image_count < 1:
+                raise ValueError("variation size and image count must be positive")
+
+            components = uploaded_parameters["components"]
+            total_energy = sum(component["energy"] for component in components) + 1e-8
+            lobes = [
+                {
+                    "freq": component["frequency"],
+                    "orientation": component["theta"],
+                    "bandwidth": 1.0 / max(component["sigma_x"], component["sigma_y"], 1e-6),
+                    "weight": component["energy"] / total_energy,
+                }
+                for component in components
+            ]
+
+            show_processing_window()
+            result_queue = queue.Queue()
+
+            def process_variations():
+                try:
+                    source_height, source_width = uploaded_image.shape[:2]
+                    textures = []
+                    for image_index in range(image_count):
+                        rng = np.random.default_rng(seed + image_index)
+                        scale = max(size / source_height, size / source_width)
+                        resized = Image.fromarray(
+                            np.uint8(uploaded_image * 255.0)
+                        ).resize(
+                            (
+                                max(size, int(source_width * scale)),
+                                max(size, int(source_height * scale)),
+                            ),
+                            Image.Resampling.BICUBIC,
+                        )
+                        max_x = resized.width - size
+                        max_y = resized.height - size
+                        crop_x = int(rng.integers(0, max_x + 1))
+                        crop_y = int(rng.integers(0, max_y + 1))
+                        crop = resized.crop((crop_x, crop_y, crop_x + size, crop_y + size))
+                        if rng.random() < 0.5:
+                            crop = crop.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
+                        if rng.random() < 0.5:
+                            crop = crop.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
+
+                        base_texture = np.asarray(crop, dtype=np.float32) / 255.0
+                        synthesized = normalize(
+                            synthesize_variation(
+                                (size, size),
+                                lobes,
+                                n_impulses=400,
+                                seed=seed + image_index,
+                            )
+                        )
+                        texture = np.clip(
+                            base_texture + (synthesized[..., None] - 0.5) * 0.18,
+                            0.0,
+                            1.0,
+                        )
+                        texture = extractor.create_color_variation(
+                            np.uint8(texture * 255.0),
+                            palette=uploaded_parameters["palette"],
+                        )
+                        textures.append(texture.astype(np.float32) / 255.0)
+                    result_queue.put((textures, None))
+                except Exception as error:
+                    result_queue.put((None, error))
+
+            def finish_variations():
+                try:
+                    textures, error = result_queue.get_nowait()
+                except queue.Empty:
+                    root.after(100, finish_variations)
+                    return
+
+                hide_processing_window()
+                if error is not None:
+                    messagebox.showerror("Variation generation failed", str(error), parent=root)
+                    status.set("Variation generation failed")
+                    return
+
+                generated_textures[:] = textures
+                show_variations(textures)
+                status.set(f"Generated {image_count} synthesized variation(s) at {size}x{size}")
+
+            threading.Thread(target=process_variations, daemon=True).start()
+            root.after(100, finish_variations)
+        except (TypeError, ValueError) as error:
+            messagebox.showerror("Variation generation failed", str(error), parent=root)
+            status.set("Variation generation failed")
 
     # No parameters; exports the currently generated textures to a CSV file.
     def export_textures():
@@ -827,8 +863,6 @@ def kernel(x, y, frequency, theta, bandwidth):
 def extract_bandwidth(gray_img, power_spectrum):
     img = gray_img.astype(np.float64)
     img -= img.mean()
-    
-
     H, W = power_spectrum.shape
     cy, cx = H // 2, W // 2
     power_spectrum[cy-2:cy+3, cx-2:cx+3] = 0  # zero out the DC spike
@@ -857,6 +891,20 @@ def extract_bandwidth(gray_img, power_spectrum):
     bandwidth = np.log2((k + 1) / (k - 1))
     return f0, bandwidth
 
+def synthesize_variation(shape, lobes, n_impulses=4000, seed=None):
+    rng = np.random.default_rng(seed)
+    height, width = shape
+    out = np.zeros(shape)
+
+    xs, ys = np.meshgrid(np.arange(width) - width/2, np.arange(height) - height/2)
+    for lobe in lobes:
+        n = int(n_impulses * lobe["weight"])
+        for _ in range(n):
+            cx, cy = rng.uniform(-width/2, width/2), rng.uniform(-height/2, height/2)
+            phase = rng.uniform(0, 2*np.pi)
+            ori = lobe["orientation"] + rng.normal(0, 0.05)  # jitter
+            out += kernel(xs - cx, ys - cy, lobe["freq"], ori, lobe["bandwidth"]) * np.cos(phase)
+    return out
 
 
 if __name__ == "__main__":
