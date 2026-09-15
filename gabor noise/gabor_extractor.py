@@ -8,6 +8,8 @@ from scipy import ndimage as ndi
 from skimage.filters import gabor_kernel
 from pylette import extract_colors
 
+gray_img = None
+
 
 def export_gabor_kernels_csv(kernels, file_path):
     """Export kernel coefficients as one row per coefficient."""
@@ -19,16 +21,19 @@ def export_gabor_kernels_csv(kernels, file_path):
                 writer.writerow((kernel_index, row, column, float(kernel[row, column])))
 
 
+
 def extract_gabor_parameters(image, max_components=8):
     """Extract JSON-friendly noise and appearance parameters from an image."""
+    global gray_img
+
     source = cv.imread(image, cv.IMREAD_COLOR) if isinstance(image, str) else image
     if source is None or source.ndim != 3:
         raise ValueError("Could not read a color texture image")
 
     image_float = source.astype(np.float32) / 255.0
-    gray = cv.cvtColor(image_float, cv.COLOR_BGR2GRAY)
-    gray -= gray.mean()
-    gray /= gray.std() + 1e-8
+    gray_img = cv.cvtColor(image_float, cv.COLOR_BGR2GRAY)
+    gray_img -= gray_img.mean()
+    gray_img /= gray_img.std() + 1e-8
 
     frequencies = np.geomspace(0.02, 0.45, 12)
     orientations = np.arange(8, dtype=np.float32) * np.pi / 8
@@ -40,8 +45,8 @@ def extract_gabor_parameters(image, max_components=8):
                 kernel = gabor_kernel(
                     frequency, theta=theta, sigma_x=sigma_x, sigma_y=sigma_y
                 )
-                real = ndi.convolve(gray, np.real(kernel), mode="wrap")
-                imaginary = ndi.convolve(gray, np.imag(kernel), mode="wrap")
+                real = ndi.convolve(gray_img, np.real(kernel), mode="wrap")
+                imaginary = ndi.convolve(gray_img, np.imag(kernel), mode="wrap")
                 energy = float(np.mean(real * real + imaginary * imaginary))
                 candidates.append({
                     "frequency": float(frequency),
@@ -70,6 +75,7 @@ def extract_gabor_parameters(image, max_components=8):
     primary = components[0]
     palette_image = np.clip(rgb * 255.0, 0.0, 255.0).astype(np.uint8)
     palette = extract_palette_from_image(palette_image, max_num_colors=8)
+    power_spectrum = get_power_spectrum()
     
 
 
@@ -98,6 +104,8 @@ def extract_gabor_parameters(image, max_components=8):
             }
             for color in palette.colors
         ],
+        "power_spectrum": power_spectrum,
+
     }
 
 
@@ -119,13 +127,48 @@ def extract_palette_from_image(image, max_num_colors=8):
     palette.to_json(filename="palette.json", colorspace='hsv')
     return palette
 
-def create_color_variation(image, color_mean, color_std):
-    """Create a color variation of an image based on mean and std deviation."""
+def create_color_variation(image, color_mean=None, color_std=None, palette=None):
+    """Create a color variation using extracted palette colors when available."""
     if image.ndim != 3 or image.shape[2] != 3:
         raise ValueError("Input image must be a color image with 3 channels.")
-    
+
     # Convert to float32 for processing
     image_float = image.astype(np.float32) / 255.0
+
+    if palette:
+        palette_rgb = np.asarray(
+            [color["rgb"] for color in palette], dtype=np.float32
+        ) / 255.0
+        palette_luminance = (
+            0.2126 * palette_rgb[:, 0]
+            + 0.7152 * palette_rgb[:, 1]
+            + 0.0722 * palette_rgb[:, 2]
+        )
+        order = np.argsort(palette_luminance)
+        palette_rgb = palette_rgb[order]
+        palette_luminance = palette_luminance[order]
+
+        luminance = (
+            0.2126 * image_float[:, :, 0]
+            + 0.7152 * image_float[:, :, 1]
+            + 0.0722 * image_float[:, :, 2]
+        )
+        luminance_min, luminance_max = luminance.min(), luminance.max()
+        if luminance_max - luminance_min < 1e-8:
+            normalized_luminance = np.full_like(luminance, 0.5)
+        else:
+            normalized_luminance = (luminance - luminance_min) / (
+                luminance_max - luminance_min
+            )
+        palette_positions = np.linspace(0.0, 1.0, len(palette_rgb))
+        color_indices = np.abs(
+            normalized_luminance[..., None] - palette_positions
+        ).argmin(axis=2)
+        new_image = palette_rgb[color_indices]
+        return np.uint8(np.clip(new_image, 0.0, 1.0) * 255.0)
+
+    if color_mean is None or color_std is None:
+        raise ValueError("Provide either a palette or color mean and standard deviation.")
     
     # Calculate current mean and std deviation
     current_mean = np.mean(image_float, axis=(0, 1))
@@ -142,4 +185,26 @@ def create_color_variation(image, color_mean, color_std):
     return (new_image_clipped * 255).astype(np.uint8)
 
 
- 
+def normalize(array):
+    """Normalize an array to the range [0, 1]."""
+    min_val = np.min(array)
+    max_val = np.max(array)
+    if max_val - min_val < 1e-8:
+        return np.zeros_like(array)
+    return (array - min_val) / (max_val - min_val)
+
+def get_power_spectrum(image=None):
+    """Compute the power spectrum of a grayscale image."""
+    if image is None:
+        if gray_img is None:
+            raise ValueError("No grayscale image is available")
+        gray = gray_img
+    elif image.ndim == 3 and image.shape[2] == 3:
+        gray = cv.cvtColor(image, cv.COLOR_BGR2GRAY)
+    else:
+        gray = image
+    f_transform = np.fft.fft2(gray)
+    f_shifted = np.fft.fftshift(f_transform)
+    power_spectrum = np.abs(f_shifted) ** 2 #Array of power spectrum values
+    power_spectrum = normalize(power_spectrum)
+    return power_spectrum

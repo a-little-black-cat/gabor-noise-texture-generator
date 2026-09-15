@@ -12,101 +12,24 @@ from scipy import ndimage
 from skimage.filters import gabor_kernel
 import tkinter as Tk
 import csv
+import queue
+import threading
 from tkinter import messagebox, ttk, filedialog
 from PIL import Image, ImageTk
 import gabor_extractor as extractor
+from scipy.fft import fft2, fftshift
+from scipy.optimize import curve_fit
 
 
+# prompt: Text shown to the user.
+# default: Value used when the user submits an empty response.
+# converter: Callable that converts the entered text to the required type.
 def prompt_value(prompt, default, converter):
     value = input(f"{prompt} [{default}]: ").strip()
     return default if not value else converter(value)
     # This is to minimize the number of input prompts for the user. If the user presses enter without typing anything, the default value will be used. Otherwise, the input will be converted to the specified type (int or float) using the provided converter function.
 
-
-def consoleInputMode():
-    texture_type = input("Enter the texture type (brick, grass, gravel) [brick]: ").strip().lower() or "brick"
-    if texture_type not in {"brick", "grass", "gravel"}:
-        raise ValueError("texture type must be brick, grass, or gravel")
-
-    height = prompt_value("Enter the height of the generated image", 512, int)
-    width = prompt_value("Enter the width of the generated image", 512, int)
-    image_count = prompt_value("Enter the number of images to generate", 1, int)
-    texture_rotation = prompt_value("Enter the rotation angle for the texture (in degrees)", 0.0, float)
-    seed = prompt_value("Enter the seed for random number generation", 42, int)
-
-    if image_count < 1:
-        raise ValueError("image_count must be at least 1")
-
-    texture_parameters = {}
-    if texture_type == "brick":
-        texture_parameters = {
-            "brick_width": prompt_value("Enter the width of the bricks", 64, int),
-            "brick_height": prompt_value("Enter the height of the bricks", 32, int),
-            "mortar_width": prompt_value("Enter the width of the mortar", 2, int),
-            "mortar_height": prompt_value("Enter the height of the mortar", 2, int),
-            "frequency": prompt_value("Enter the horizontal Gabor frequency", 0.08, float),
-            "theta": np.deg2rad(prompt_value("Enter the horizontal Gabor angle (in degrees)", 0.0, float)),
-            "sigma_x": prompt_value("Enter the horizontal Gabor sigma_x", 5.0, float),
-            "sigma_y": prompt_value("Enter the horizontal Gabor sigma_y", 2.0, float),
-            "vertical_frequency": prompt_value("Enter the vertical Gabor frequency", 0.08, float),
-            "vertical_theta": np.deg2rad(prompt_value("Enter the vertical Gabor angle (in degrees)", 90.0, float)),
-            "vertical_sigma_x": prompt_value("Enter the vertical Gabor sigma_x", 5.0, float),
-            "vertical_sigma_y": prompt_value("Enter the vertical Gabor sigma_y", 2.0, float),
-            "horizontal_weight": prompt_value("Enter the horizontal noise weight", 0.7, float),
-            "vertical_weight": prompt_value("Enter the vertical noise weight", 0.3, float),
-            "mortar_frequency": prompt_value("Enter the mortar Gabor frequency", 0.12, float),
-            "mortar_theta": np.deg2rad(prompt_value("Enter the mortar Gabor angle (in degrees)", 0.0, float)),
-            "mortar_sigma_x": prompt_value("Enter the mortar Gabor sigma_x", 2.0, float),
-            "mortar_sigma_y": prompt_value("Enter the mortar Gabor sigma_y", 1.0, float),
-            "brick_base": prompt_value("Enter the base brick intensity (0 to 1)", 0.55, float),
-            "brick_contrast": prompt_value("Enter the brick contrast", 0.2, float),
-            "mortar_base": prompt_value("Enter the base mortar intensity (0 to 1)", 0.25, float),
-            "mortar_contrast": prompt_value("Enter the mortar contrast", 0.05, float),
-        }
-    else:
-        texture_parameters = {
-            "frequency": prompt_value("Enter the Gabor frequency", 0.08, float),
-            "theta": prompt_value("Enter the Gabor angle (in degrees)", 0.0, float),
-            "sigma_x": prompt_value("Enter the Gabor sigma_x", 5.0, float),
-            "sigma_y": prompt_value("Enter the Gabor sigma_y", 2.0, float),
-        }
-
-    textures = []
-    for image_index in range(image_count):
-        image_seed = seed + image_index
-
-        if texture_type == "brick":
-            texture = make_brick_texture(
-                height=height,
-                width=width,
-                **texture_parameters,
-                texture_rotation=texture_rotation,
-                seed=image_seed,
-            )
-        else:
-            noise_function = make_grass_texture if texture_type == "grass" else make_gravel_texture
-            texture = noise_function(
-                height=height,
-                width=width,
-                frequency=texture_parameters["frequency"],
-                theta=np.deg2rad(texture_parameters["theta"]) + np.deg2rad(texture_rotation),
-                sigma_x=texture_parameters["sigma_x"],
-                sigma_y=texture_parameters["sigma_y"],
-                seed=image_seed,
-            )
-
-        textures.append(texture)
-
-        plt.figure(figsize=(8, 8))
-        plt.imshow(texture, cmap="gray")
-        plt.title(f"{texture_type} {image_index + 1}")
-        plt.axis("off")
-        plt.tight_layout()
-
-    plt.show()
-    return textures
-
-
+# No parameters; creates and runs the texture generator UI.
 def userInputMode():
     root = Tk.Tk()
     root.title("Gabor Texture Generator")
@@ -123,9 +46,11 @@ def userInputMode():
     canvas.pack(side="left", fill="both", expand=True)
     scrollbar.pack(side="right", fill="y")
 
+    # _event: Optional Tkinter configure event that triggers the update.
     def update_scroll_region(_event=None):
         canvas.configure(scrollregion=canvas.bbox("all"))
 
+    # event: Tkinter canvas resize event used to match the form width.
     def resize_form(event):
         canvas.itemconfigure(canvas_window, width=event.width)
 
@@ -193,12 +118,18 @@ def userInputMode():
     uploaded_parameters = None
     uploaded_image = None
     variation_window = None
+    processing_window = None
 
+    # title: Text displayed in the section's label frame.
     def add_section(title):
         section = ttk.LabelFrame(form_frame, text=title, padding=8)
         section.pack(fill="x", pady=(0, 10))
         return section
 
+    # section: Parent Tkinter frame for the input field.
+    # name: Internal key used to store the field variable.
+    # label: Text displayed beside the input field.
+    # default: Initial value displayed in the input field.
     def add_field(section, name, label, default):
         row = ttk.Frame(section)
         row.pack(fill="x", pady=2)
@@ -207,6 +138,34 @@ def userInputMode():
         variables.setdefault(name, []).append(variable)
         ttk.Entry(row, textvariable=variable, width=14).pack(side="right")
 
+    # No parameters; displays the modal processing indicator.
+    def show_processing_window():
+        nonlocal processing_window
+        if processing_window is not None and processing_window.winfo_exists():
+            processing_window.destroy()
+
+        processing_window = Tk.Toplevel(root)
+        processing_window.title("Processing")
+        processing_window.geometry("280x120")
+        processing_window.resizable(False, False)
+        processing_window.transient(root)
+        processing_window.grab_set()
+        ttk.Label(processing_window, text="Processing...", font=("TkDefaultFont", 14, "bold")).pack(pady=(22, 8))
+        progress = ttk.Progressbar(processing_window, mode="indeterminate", length=210)
+        progress.pack()
+        progress.start(10)
+        processing_window.protocol("WM_DELETE_WINDOW", lambda: None)
+        root.update_idletasks()
+
+    # No parameters; closes the processing indicator if it exists.
+    def hide_processing_window():
+        nonlocal processing_window
+        if processing_window is not None and processing_window.winfo_exists():
+            processing_window.grab_release()
+            processing_window.destroy()
+        processing_window = None
+
+    # No parameters; opens a file picker and starts texture extraction.
     def upload_texture():
         nonlocal uploaded_parameters, uploaded_image
         file_path = filedialog.askopenfilename(
@@ -215,13 +174,37 @@ def userInputMode():
         )
         if file_path:
             print(f"Selected texture image: {file_path}")
-            try:
-                extracted = extractor.extract_gabor_parameters(file_path)
-                
+            show_processing_window()
+            result_queue = queue.Queue()
+
+            # No parameters; extracts parameters and image data in the worker thread.
+            def process_upload():
+                try:
+                    extracted = extractor.extract_gabor_parameters(file_path)
+                    image = np.asarray(
+                        Image.open(file_path).convert("RGB"), dtype=np.float32
+                    ) / 255.0
+                    result_queue.put((extracted, image, None))
+                except Exception as error:
+                    result_queue.put((None, None, error))
+
+            # No parameters; checks for worker results and updates Tkinter widgets.
+            def finish_upload():
+                nonlocal uploaded_parameters, uploaded_image
+                try:
+                    extracted, image, error = result_queue.get_nowait()
+                except queue.Empty:
+                    root.after(100, finish_upload)
+                    return
+
+                hide_processing_window()
+                if error is not None:
+                    messagebox.showerror("Texture extraction failed", str(error), parent=root)
+                    status.set("Texture extraction failed")
+                    return
+
                 uploaded_parameters = extracted
-                uploaded_image = np.asarray(
-                    Image.open(file_path).convert("RGB"), dtype=np.float32
-                ) / 255.0
+                uploaded_image = image
                 for name in ("frequency", "sigma_x", "sigma_y"):
                     for variable in variables[name]:
                         variable.set(f"{extracted[name]:.6g}")
@@ -232,10 +215,11 @@ def userInputMode():
                     f"from {extracted['image_size']['width']}x{extracted['image_size']['height']} image"
                 )
                 print(extracted)
-            except (OSError, ValueError) as error:
-                messagebox.showerror("Texture extraction failed", str(error), parent=root)
-                status.set("Texture extraction failed")
 
+            threading.Thread(target=process_upload, daemon=True).start()
+            root.after(100, finish_upload)
+
+    # textures: Sequence of generated RGB texture arrays with values from 0.0 to 1.0.
     def show_variations(textures):
         nonlocal variation_window
         if variation_window is not None and variation_window.winfo_exists():
@@ -281,9 +265,11 @@ def userInputMode():
         canvas.grid(row=1, column=0, sticky="nsew")
         scrollbar.grid(row=1, column=1, sticky="ns")
 
+        # _event: Optional Tkinter configure event that triggers the update.
         def update_scroll_region(_event=None):
             canvas.configure(scrollregion=canvas.bbox("all"))
 
+        # event: Tkinter canvas resize event used to match the grid width.
         def resize_grid(event):
             canvas.itemconfigure(canvas_window, width=event.width)
 
@@ -301,6 +287,7 @@ def userInputMode():
             ttk.Label(card, text=f"Variation {index + 1}").pack(pady=(4, 0))
         variation_window._photos = photos
 
+    # No parameters; generates variations using the uploaded image and extracted data.
     def generate_uploaded_variations():
         try:
             if uploaded_parameters is None or uploaded_image is None:
@@ -353,13 +340,9 @@ def userInputMode():
                 perturbation = normalize(combined)[..., None] - 0.5
                 texture = np.clip(texture + perturbation * 0.12, 0.0, 1.0)
 
-                # Vary the RGB distribution while preserving the crop's spatial detail.
-                base_mean = np.asarray(uploaded_parameters["color_mean"], dtype=np.float32)
-                base_std = np.asarray(uploaded_parameters["color_std"], dtype=np.float32)
-                target_mean = np.clip(base_mean + rng.normal(0.0, 0.025, 3), 0.0, 1.0)
-                target_std = np.maximum(base_std * rng.uniform(0.9, 1.1, 3), 0.005)
+                # Reuse colors extracted from the uploaded image.
                 texture_uint8 = extractor.create_color_variation(
-                    np.uint8(texture * 255.0), target_mean, target_std
+                    np.uint8(texture * 255.0), palette=uploaded_parameters["palette"]
                 )
                 texture = texture_uint8.astype(np.float32) / 255.0
                 textures.append(texture)
@@ -407,9 +390,12 @@ def userInputMode():
     generated_textures = []
     results_figure = None
 
+    # name: Internal key for the input variable to read.
+    # converter: Callable that converts the field text to the required type.
     def read_value(name, converter):
         return converter(variables[name][0].get().strip())
 
+    # No parameters; exports the currently generated textures to a CSV file.
     def export_textures():
         if not generated_textures:
             messagebox.showinfo("No results", "Generate at least one texture first.", parent=root)
@@ -434,6 +420,7 @@ def userInputMode():
                     writer.writerow((image_index, row, column, float(value)))
         status.set(f"Exported {len(generated_textures)} texture(s) to CSV")
 
+    # No parameters; generates textures from the values currently entered in the form.
     def generate_from_form():
         nonlocal results_figure
         try:
@@ -519,11 +506,19 @@ def userInputMode():
     
 
 
+# image: Numeric array whose values should be rescaled to the range 0.0 to 1.0.
 def normalize(image):
     image = image - image.min()
     return image / (image.max() + 1e-8)
 
 
+# height: Number of rows in the generated noise image.
+# width: Number of columns in the generated noise image.
+# frequency: Gabor carrier frequency.
+# theta: Gabor orientation in radians.
+# sigma_x: Gaussian spread along the kernel x axis.
+# sigma_y: Gaussian spread along the kernel y axis.
+# seed: Random seed for reproducible source noise.
 def make_gabor_noise(
     height=512,
     width=512,
@@ -567,6 +562,32 @@ def make_gabor_noise(
     return noise
 
 
+# height: Number of rows in the generated texture.
+# width: Number of columns in the generated texture.
+# brick_width: Width of one brick in pixels.
+# brick_height: Height of one brick in pixels.
+# mortar_width: Width of vertical mortar in pixels.
+# mortar_height: Height of horizontal mortar in pixels.
+# texture_rotation: Rotation of the brick texture in degrees.
+# frequency: Horizontal Gabor frequency.
+# theta: Horizontal Gabor orientation in radians.
+# sigma_x: Horizontal Gabor x spread.
+# sigma_y: Horizontal Gabor y spread.
+# vertical_frequency: Vertical Gabor frequency.
+# vertical_theta: Vertical Gabor orientation in radians.
+# vertical_sigma_x: Vertical Gabor x spread.
+# vertical_sigma_y: Vertical Gabor y spread.
+# horizontal_weight: Contribution of horizontal noise.
+# vertical_weight: Contribution of vertical noise.
+# mortar_frequency: Mortar Gabor frequency.
+# mortar_theta: Mortar Gabor orientation in radians.
+# mortar_sigma_x: Mortar Gabor x spread.
+# mortar_sigma_y: Mortar Gabor y spread.
+# brick_base: Base grayscale value for bricks.
+# brick_contrast: Variation strength applied to bricks.
+# mortar_base: Base grayscale value for mortar.
+# mortar_contrast: Variation strength applied to mortar.
+# seed: Random seed used for reproducible noise.
 def make_brick_texture(
     height,
     width,
@@ -661,6 +682,13 @@ def make_brick_texture(
     return np.clip(texture, 0.0, 1.0)
 
 #gotta differentiate between calculations of grass and gravel here onwards womp
+# height: Number of rows in the generated texture.
+# width: Number of columns in the generated texture.
+# frequency: Strand density and broad-noise frequency.
+# theta: Strand orientation in radians.
+# sigma_x: Strand spread along the x axis.
+# sigma_y: Strand spread along the y axis.
+# seed: Random seed for reproducible grass noise.
 def make_grass_texture(
     height,
     width,
@@ -709,6 +737,13 @@ def make_grass_texture(
     grass_texture = 0.12 + 0.68 * strands + 0.20 * broad_variation
     return np.clip(grass_texture, 0.0, 1.0)
 
+# height: Number of rows in the generated texture.
+# width: Number of columns in the generated texture.
+# frequency: Gabor carrier frequency for gravel noise.
+# theta: Gabor orientation in radians.
+# sigma_x: Gaussian spread along the kernel x axis.
+# sigma_y: Gaussian spread along the kernel y axis.
+# seed: Random seed for reproducible noise.
 def make_gravel_texture(
     height,
     width,
@@ -733,6 +768,13 @@ def make_gravel_texture(
     return gravel_texture
 
 
+# height: Number of rows in the generated texture.
+# width: Number of columns in the generated texture.
+# frequency: Gabor carrier frequency for rock noise.
+# theta: Gabor orientation in radians.
+# sigma_x: Gaussian spread along the kernel x axis.
+# sigma_y: Gaussian spread along the kernel y axis.
+# seed: Random seed for reproducible noise.
 def make_rock_texture(
     height,
     width,
@@ -755,6 +797,67 @@ def make_rock_texture(
     rock_texture = normalize(rock_noise)
 
     return rock_texture
+
+
+"""
+To create variation from image, and using gabor's dependency on power spectrum...
+"""
+
+# n_lobes: Maximum number of dominant power-spectrum peaks to return.
+def find_lobes(n_lobes=6, power_spectrum=None):
+    # Find local maxima in the power spectrum -> candidate (freq, orientation) pairs
+    if power_spectrum is None:
+        power_spectrum = extractor.get_power_spectrum()
+    
+    local_max = ndimage.maximum_filter(power_spectrum, size=9) == power_spectrum
+    peaks = np.argwhere(local_max & (power_spectrum > power_spectrum.mean() * 5))
+    peaks = sorted(peaks, key=lambda p: -power_spectrum[tuple(p)])[:n_lobes]
+    return peaks  # each peak -> (fx, fy) gives frequency + orientation, local spread gives bandwidth
+
+
+# No parameters; placeholder for future kernel-generation logic.
+def kernel(x, y, frequency, theta, bandwidth):
+    xr = x * np.cos(theta) + y * np.sin(theta)
+    yr = -x * np.sin(theta) + y * np.cos(theta)
+    gaussian = np.exp(-np.pi * bandwidth**2 * (xr**2 + yr**2))
+    return gaussian * np.cos(2 * np.pi * frequency * xr)
+
+
+
+def extract_bandwidth(gray_img, power_spectrum):
+    img = gray_img.astype(np.float64)
+    img -= img.mean()
+    
+
+    H, W = power_spectrum.shape
+    cy, cx = H // 2, W // 2
+    power_spectrum[cy-2:cy+3, cx-2:cx+3] = 0  # zero out the DC spike
+
+    # locate the dominant frequency peak
+    py, px = np.unravel_index(np.argmax(power_spectrum), power_spectrum.shape)
+    f0 = np.hypot(px - cx, py - cy) / max(H, W)  # cycles/pixel
+
+    # fit a 2D Gaussian around the peak to get its spread (sigma_f)
+    r = 10
+    y, x = np.mgrid[py-r:py+r, px-r:px+r]
+    patch = power_spectrum[py-r:py+r, px-r:px+r]
+
+
+    def gauss2d(coords, amp, sigma):
+        yy, xx = coords
+        return amp * np.exp(-((xx - px)**2 + (yy - py)**2) / (2 * sigma**2))
+
+    (amp, sigma_f_px), _ = curve_fit(gauss2d, np.vstack([y.ravel(), x.ravel()]),
+                                      patch.ravel(), p0=[patch.max(), 3])
+    sigma_f = sigma_f_px / max(H, W)  # normalize to cycles/pixel
+
+    # convert spatial-frequency spread -> octave bandwidth
+    sigma_spatial = 1.0 / (2 * np.pi * sigma_f)
+    k = sigma_spatial * f0 * np.pi / np.sqrt(np.log(2) / 2)
+    bandwidth = np.log2((k + 1) / (k - 1))
+    return f0, bandwidth
+
+
 
 if __name__ == "__main__":
     userInputMode()
