@@ -1,13 +1,14 @@
 """Feature extraction for creating variations of uploaded texture images."""
 
 import csv
+import os
 
 import cv2 as cv
 import numpy as np
 from scipy import ndimage as ndi
 from skimage.filters import gabor_kernel
 from pylette import extract_colors
-
+source = None
 gray_img = None
 
 
@@ -25,8 +26,13 @@ def export_gabor_kernels_csv(kernels, file_path):
 def extract_gabor_parameters(image, max_components=8):
     """Extract JSON-friendly noise and appearance parameters from an image."""
     global gray_img
+    global source
 
-    source = cv.imread(image, cv.IMREAD_COLOR) if isinstance(image, str) else image
+    source = (
+        cv.imread(os.fspath(image), cv.IMREAD_COLOR)
+        if isinstance(image, (str, os.PathLike))
+        else image
+    )
     if source is None or source.ndim != 3:
         raise ValueError("Could not read a color texture image")
 
