@@ -1,2 +1,3 @@
-**/__pycache__/
+gabor noise/__pycache__/
 *.py[cod]
+model_weights/
