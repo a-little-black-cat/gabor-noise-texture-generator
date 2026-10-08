@@ -1,24 +1,19 @@
-"""
-1. Implement gabor filter
-    1.a: set filter parameters 
-    1.b: set type of texture (grass, gravel, brick)
-    1.c: set size of generated image
-    1.d: set count of generated images
-2. Compute features of the image using gabor filter
-"""
-import matplotlib.pyplot as plt
+"""Upload a texture and generate GAN-based variations."""
+
 import numpy as np
-from scipy import ndimage
-from skimage.filters import gabor_kernel
 import tkinter as Tk
-import csv
+from pathlib import Path
 import queue
+import sys
 import threading
 from tkinter import messagebox, ttk, filedialog
 from PIL import Image, ImageTk
 import gabor_extractor as extractor
-from scipy.fft import fft2, fftshift
-from scipy.optimize import curve_fit
+
+MODEL_DIRECTORY = Path(__file__).parent / "Model"
+if str(MODEL_DIRECTORY) not in sys.path:
+    sys.path.insert(0, str(MODEL_DIRECTORY))
+from training import PatchGAN
 
 
 # prompt: Text shown to the user.
@@ -60,57 +55,10 @@ def userInputMode():
     ttk.Label(form_frame, text="Gabor Texture Generator", font=("TkDefaultFont", 16, "bold")).pack(anchor="w", pady=(0, 12))
 
     general_defaults = {
-        "height": 512,
-        "width": 512,
-        "variation_size": 512,
-        "image_count": 1,
-        "texture_rotation": 0.0,
+        "variation_size": 64,
+        "training_epochs": 50,
+        "training_batch_size": 4,
         "seed": 42,
-    }
-    brick_defaults = {
-        "brick_width": 64,
-        "brick_height": 32,
-        "mortar_width": 2,
-        "mortar_height": 2,
-        "frequency": 0.08,
-        "theta": 0.0,
-        "sigma_x": 5.0,
-        "sigma_y": 2.0,
-        "vertical_frequency": 0.08,
-        "vertical_theta": 90.0,
-        "vertical_sigma_x": 5.0,
-        "vertical_sigma_y": 2.0,
-        "horizontal_weight": 0.7,
-        "vertical_weight": 0.3,
-        "mortar_frequency": 0.12,
-        "mortar_theta": 0.0,
-        "mortar_sigma_x": 2.0,
-        "mortar_sigma_y": 1.0,
-        "brick_base": 0.55,
-        "brick_contrast": 0.2,
-        "mortar_base": 0.25,
-        "mortar_contrast": 0.05,
-    }
-    
-    grass_defaults = {
-        "frequency": 0.055,
-        "theta": 0.0,
-        "sigma_x": 7.0,
-        "sigma_y": 1.2,
-    }
-
-    gravel_defaults = {
-        "frequency": 0.08,
-        "theta": 0.0,
-        "sigma_x": 5.0,
-        "sigma_y": 2.0,
-    }
-
-    rock_defaults = { #LIKELY to be converted into woronoi tessellation or something similar -- might be combined with proc. rock generator in future
-        "frequency": 0.08,  
-        "theta": 0.0,
-        "sigma_x": 5.0,
-        "sigma_y": 2.0,
     }
 
 
@@ -119,6 +67,7 @@ def userInputMode():
     uploaded_image = None
     variation_window = None
     processing_window = None
+    processing_message = Tk.StringVar(value="Processing...")
 
     # title: Text displayed in the section's label frame.
     def add_section(title):
@@ -138,8 +87,8 @@ def userInputMode():
         variables.setdefault(name, []).append(variable)
         ttk.Entry(row, textvariable=variable, width=14).pack(side="right")
 
-    # No parameters; displays the modal processing indicator.
-    def show_processing_window():
+    # message: Initial status shown in the modal processing indicator.
+    def show_processing_window(message="Processing..."):
         nonlocal processing_window
         if processing_window is not None and processing_window.winfo_exists():
             processing_window.destroy()
@@ -150,12 +99,24 @@ def userInputMode():
         processing_window.resizable(False, False)
         processing_window.transient(root)
         processing_window.grab_set()
-        ttk.Label(processing_window, text="Processing...", font=("TkDefaultFont", 14, "bold")).pack(pady=(22, 8))
+        processing_label = ttk.Label(
+            processing_window,
+            textvariable=processing_message,
+            font=("TkDefaultFont", 14, "bold"),
+        )
+        processing_label.pack(pady=(22, 8))
         progress = ttk.Progressbar(processing_window, mode="indeterminate", length=210)
         progress.pack()
         progress.start(10)
+        processing_message.set(message)
         processing_window.protocol("WM_DELETE_WINDOW", lambda: None)
         root.update_idletasks()
+
+    # message: Status text describing the current background operation.
+    def update_processing_message(message):
+        if processing_window is not None and processing_window.winfo_exists():
+            processing_message.set(message)
+            processing_window.update_idletasks()
 
     # No parameters; closes the processing indicator if it exists.
     def hide_processing_window():
@@ -174,13 +135,15 @@ def userInputMode():
         )
         if file_path:
             print(f"Selected texture image: {file_path}")
-            show_processing_window()
+            show_processing_window("Loading uploaded image...")
             result_queue = queue.Queue()
 
             # No parameters; extracts parameters and image data in the worker thread.
             def process_upload():
                 try:
+                    root.after(0, update_processing_message, "Extracting Gabor features...")
                     extracted = extractor.extract_gabor_parameters(file_path)
+                    root.after(0, update_processing_message, "Preparing source texture...")
                     image = np.asarray(
                         Image.open(file_path).convert("RGB"), dtype=np.float32
                     ) / 255.0
@@ -205,11 +168,7 @@ def userInputMode():
 
                 uploaded_parameters = extracted
                 uploaded_image = image
-                for name in ("frequency", "sigma_x", "sigma_y"):
-                    for variable in variables[name]:
-                        variable.set(f"{extracted[name]:.6g}")
-                for variable in variables["theta"]:
-                    variable.set(f"{np.rad2deg(extracted['theta']):.3f}")
+                uploaded_file_label.configure(text=f"Selected: {Path(file_path).name}")
                 status.set(
                     f"Extracted {len(extracted['components'])} noise components "
                     f"from {extracted['image_size']['width']}x{extracted['image_size']['height']} image"
@@ -277,7 +236,7 @@ def userInputMode():
         canvas.bind("<Configure>", resize_grid)
         photos = []
         for index, texture in enumerate(textures):
-            image = Image.fromarray(np.uint8(np.clip(texture, 0.0, 1.0) * 255.0))
+            image = Image.fromarray(np.asarray(texture, dtype=np.uint8), mode="RGB")
             image.thumbnail((220, 220), Image.Resampling.LANCZOS)
             photo = ImageTk.PhotoImage(image)
             photos.append(photo)
@@ -287,14 +246,17 @@ def userInputMode():
             ttk.Label(card, text=f"Variation {index + 1}").pack(pady=(4, 0))
         variation_window._photos = photos
 
+        ttk.Button(
+            content_frame,
+            text="Save Variations as PNGs",
+            command=save_generated_textures,
+        ).grid(row=2, column=0, columnspan=2, pady=(8, 12))
+
     # No parameters; generates variations using the uploaded image and extracted data.
     
 
 
-    general_section = add_section("General")
-    texture_type = Tk.StringVar(value="brick")
-    ttk.Label(general_section, text="Texture type").pack(side="left", anchor="w")
-    ttk.Combobox(general_section, textvariable=texture_type, values=("brick", "grass", "gravel"), state="readonly", width=11).pack(side="right")
+    general_section = add_section("GAN Settings")
     for name, default in general_defaults.items():
         add_field(general_section, name, name.replace("_", " ").title(), default)
 
@@ -306,68 +268,114 @@ def userInputMode():
         text="Generate Uploaded Variations",
         command=lambda: generate_synthesized_variations(),
     ).pack(side="right", padx=(0, 8))
-
-    brick_section = add_section("Brick Parameters")
-    for name, default in brick_defaults.items():
-        add_field(brick_section, name, name.replace("_", " ").title(), default)
-
-    grass_section = add_section("GrassParameters")
-    for name, default in grass_defaults.items():
-        add_field(grass_section, name, name.replace("_", " ").title(), default)
-
-    gravel_section = add_section("GravelParameters")
-    for name, default in gravel_defaults.items():
-        add_field(gravel_section, name, name.replace("_", " ").title(), default)
-
-    rock_section = add_section("Rock Parameters")
-    for name, default in rock_defaults.items():
-        add_field(rock_section, name, name.replace("_", " ").title(), default)
+    uploaded_file_label = ttk.Label(upload_texture_section, text="No image selected")
+    uploaded_file_label.pack(side="left", padx=(8, 0))
 
     status = Tk.StringVar(value="Ready")
     generated_textures = []
-    results_figure = None
 
     # name: Internal key for the input variable to read.
     # converter: Callable that converts the field text to the required type.
     def read_value(name, converter):
         return converter(variables[name][0].get().strip())
 
-    # No parameters; synthesizes and displays variations from uploaded Gabor lobes.
+    # No parameters; trains a conditional GAN and displays generated variations.
     def generate_synthesized_variations():
         try:
             if uploaded_parameters is None or uploaded_image is None:
                 raise ValueError("Upload a texture before generating variations")
 
             size = read_value("variation_size", int)
-            image_count = read_value("image_count", int)
+            training_epochs = read_value("training_epochs", int)
+            training_batch_size = read_value("training_batch_size", int)
             seed = read_value("seed", int)
-            if size < 1 or image_count < 1:
-                raise ValueError("variation size and image count must be positive")
+            variation_count = 4
+            if size < 1:
+                raise ValueError("variation size must be positive")
+            if size < 16 or size & (size - 1):
+                raise ValueError("variation size must be a power of two and at least 16")
+            if training_epochs < 1 or training_batch_size < 1:
+                raise ValueError("training epochs and batch size must be positive")
 
-            components = uploaded_parameters["components"]
-            total_energy = sum(component["energy"] for component in components) + 1e-8
-            lobes = [
-                {
-                    "freq": component["frequency"],
-                    "orientation": component["theta"],
-                    "bandwidth": 1.0 / max(component["sigma_x"], component["sigma_y"], 1e-6),
-                    "weight": component["energy"] / total_energy,
-                }
-                for component in components
-            ]
-
-            show_processing_window()
+            show_processing_window("Preparing GAN training...")
             result_queue = queue.Queue()
 
             def process_variations():
                 try:
+                    root.after(0, update_processing_message, "Preparing GAN training patches...")
                     source_height, source_width = uploaded_image.shape[:2]
-                    textures = []
-                    for image_index in range(image_count):
-                        rng = np.random.default_rng(seed + image_index)
+                    if source_height < size or source_width < size:
                         scale = max(size / source_height, size / source_width)
                         resized = Image.fromarray(
                             np.uint8(uploaded_image * 255.0)
+                        ).resize(
+                            (
+                                max(size, int(source_width * scale)),
+                                max(size, int(source_height * scale)),
+                            ),
+                            Image.Resampling.BICUBIC,
+                        )
+                        training_image = np.asarray(resized, dtype=np.float32) / 255.0
+                    else:
+                        training_image = uploaded_image
+
+                    effective_batch_size = min(
+                        training_batch_size,
+                        max(1, (4 * 64 * 64) // (size * size)),
+                    )
+                    if effective_batch_size != training_batch_size:
+                        root.after(
+                            0,
+                            update_processing_message,
+                            f"Reducing batch size to {effective_batch_size} "
+                            f"for {size}x{size} patches...",
+                        )
+
+                    def report_epoch(epoch, total_epochs, generator_loss, discriminator_loss):
+                        root.after(
+                            0,
+                            update_processing_message,
+                            f"Training epoch {epoch}/{total_epochs} | "
+                            f"G loss {generator_loss:.4f} | D loss {discriminator_loss:.4f}",
+                        )
+
+                    trainer = PatchGAN(
+                        source_image=training_image,
+                        gabor_parameters=uploaded_parameters,
+                        patch_size=size,
+                        latent_dim=128,
+                    )
+                    trainer.train(
+                        epochs=training_epochs,
+                        batch_size=effective_batch_size,
+                        stride=max(1, size // 2),
+                        seed=seed,
+                        progress_callback=report_epoch,
+                    )
+                    root.after(0, update_processing_message, "Generating GAN variations...")
+                    generated = trainer.generate(
+                        count=variation_count,
+                        seed=seed,
+                    ).numpy()
+                    if generated.ndim != 4 or generated.shape[0] != variation_count:
+                        raise ValueError(
+                            "GAN returned an unexpected variation batch shape: "
+                            f"{generated.shape}"
+                        )
+                    source_height, source_width = training_image.shape[:2]
+                    textures = []
+                    for image_index, generated_texture in enumerate(generated):
+                        root.after(
+                            0,
+                            update_processing_message,
+                            f"Blending source structure into variation "
+                            f"{image_index + 1} of {variation_count}...",
+                        )
+                        rng = np.random.default_rng(seed + image_index)
+                        scale = max(size / source_height, size / source_width)
+                        resized = Image.fromarray(
+                            np.uint8(np.clip(training_image, 0.0, 1.0) * 255.0),
+                            mode="RGB",
                         ).resize(
                             (
                                 max(size, int(source_width * scale)),
@@ -379,31 +387,28 @@ def userInputMode():
                         max_y = resized.height - size
                         crop_x = int(rng.integers(0, max_x + 1))
                         crop_y = int(rng.integers(0, max_y + 1))
-                        crop = resized.crop((crop_x, crop_y, crop_x + size, crop_y + size))
+                        source_texture = np.asarray(
+                            resized.crop((crop_x, crop_y, crop_x + size, crop_y + size)),
+                            dtype=np.float32,
+                        ) / 255.0
                         if rng.random() < 0.5:
-                            crop = crop.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
+                            source_texture = source_texture[:, ::-1]
                         if rng.random() < 0.5:
-                            crop = crop.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
-
-                        base_texture = np.asarray(crop, dtype=np.float32) / 255.0
-                        synthesized = normalize(
-                            synthesize_variation(
-                                (size, size),
-                                lobes,
-                                n_impulses=400,
-                                seed=seed + image_index,
+                            source_texture = source_texture[::-1]
+                        textures.append(
+                            np.asarray(
+                                np.clip(
+                                    source_texture * 0.75
+                                    + np.clip(generated_texture, 0.0, 1.0) * 0.25,
+                                    0.0,
+                                    1.0,
+                                )
+                                * 255.0,
+                                dtype=np.uint8,
                             )
                         )
-                        texture = np.clip(
-                            base_texture + (synthesized[..., None] - 0.5) * 0.18,
-                            0.0,
-                            1.0,
-                        )
-                        texture = extractor.create_color_variation(
-                            np.uint8(texture * 255.0),
-                            palette=uploaded_parameters["palette"],
-                        )
-                        textures.append(texture.astype(np.float32) / 255.0)
+                    textures = np.asarray(textures, dtype=np.uint8)
+                    root.after(0, update_processing_message, "Finalizing generated variations...")
                     result_queue.put((textures, None))
                 except Exception as error:
                     result_queue.put((None, error))
@@ -423,7 +428,10 @@ def userInputMode():
 
                 generated_textures[:] = textures
                 show_variations(textures)
-                status.set(f"Generated {image_count} synthesized variation(s) at {size}x{size}")
+                status.set(
+                    f"Trained GAN for {training_epochs} epoch(s) and generated "
+                    f"{variation_count} source-guided variation(s) at {size}x{size}"
+                )
 
             threading.Thread(target=process_variations, daemon=True).start()
             root.after(100, finish_variations)
@@ -431,112 +439,30 @@ def userInputMode():
             messagebox.showerror("Variation generation failed", str(error), parent=root)
             status.set("Variation generation failed")
 
-    # No parameters; exports the currently generated textures to a CSV file.
-    def export_textures():
+    # No parameters; saves generated RGB textures as individual PNG files.
+    def save_generated_textures():
         if not generated_textures:
-            messagebox.showinfo("No results", "Generate at least one texture first.", parent=root)
+            messagebox.showinfo(
+                "No results",
+                "Generate at least one uploaded variation first.",
+                parent=root,
+            )
             return
 
-        file_path = filedialog.asksaveasfilename(
-            title="Export texture data",
-            defaultextension=".csv",
-            filetypes=[("CSV files", "*.csv")],
+        directory = filedialog.askdirectory(
+            title="Choose a folder for generated variations"
         )
-        if not file_path:
+        if not directory:
             return
 
-        with open(file_path, "w", newline="", encoding="utf-8") as csv_file:
-            writer = csv.writer(csv_file)
-            writer.writerow(("image", "row", "column", "intensity"))
-            for image_index, texture in enumerate(generated_textures, start=1):
-                for row, column in np.ndindex(texture.shape):
-                    value = texture[row, column]
-                    if np.ndim(value) > 0:
-                        value = np.mean(value)
-                    writer.writerow((image_index, row, column, float(value)))
-        status.set(f"Exported {len(generated_textures)} texture(s) to CSV")
+        output_directory = Path(directory)
+        for index, texture in enumerate(generated_textures, start=1):
+            image = Image.fromarray(np.asarray(texture, dtype=np.uint8), mode="RGB")
+            image.save(output_directory / f"variation_{index:03d}.png")
+        status.set(
+            f"Saved {len(generated_textures)} variation(s) to {output_directory}"
+        )
 
-    # No parameters; generates textures from the values currently entered in the form.
-    def generate_from_form():
-        nonlocal results_figure
-        try:
-            height = read_value("height", int)
-            width = read_value("width", int)
-            image_count = read_value("image_count", int)
-            texture_rotation = read_value("texture_rotation", float)
-            seed = read_value("seed", int)
-            if height < 1 or width < 1 or image_count < 1:
-                raise ValueError("height, width, and image count must be positive")
-
-            selected_type = texture_type.get()
-            textures = []
-            for image_index in range(image_count):
-                image_seed = seed + image_index
-                if selected_type == "brick":
-                    parameters = {name: read_value(name, float if isinstance(default, float) else int) for name, default in brick_defaults.items()}
-                    parameters["theta"] = np.deg2rad(parameters["theta"])
-                    parameters["vertical_theta"] = np.deg2rad(parameters["vertical_theta"])
-                    parameters["mortar_theta"] = np.deg2rad(parameters["mortar_theta"])
-                    texture = make_brick_texture(height=height, width=width, texture_rotation=texture_rotation, seed=image_seed, **parameters)
-
-                elif selected_type == "grass":
-                    parameters = {name: read_value(name, float) for name in grass_defaults}
-                    texture = make_grass_texture(
-                        height=height,
-                        width=width,
-                        frequency=parameters["frequency"],
-                        theta=np.deg2rad(parameters["theta"] + texture_rotation),
-                        sigma_x=parameters["sigma_x"],
-                        sigma_y=parameters["sigma_y"],
-                        seed=image_seed,
-                    )
-
-                elif selected_type == "gravel":
-                
-                    parameters = {name: read_value(name, float) for name in gravel_defaults}
-                    texture = make_gravel_texture(
-                        height=height,
-                        width=width,
-                        frequency=parameters["frequency"],
-                        theta=np.deg2rad(parameters["theta"] + texture_rotation),
-                        sigma_x=parameters["sigma_x"],
-                        sigma_y=parameters["sigma_y"],
-                        seed=image_seed,
-                    )
-                elif selected_type == "rock":
-                    parameters = {name: read_value(name, float) for name in rock_defaults}
-                    texture = make_rock_texture(
-                        height=height,
-                        width=width,
-                        frequency=parameters["frequency"],
-                        theta=np.deg2rad(parameters["theta"] + texture_rotation),
-                        sigma_x=parameters["sigma_x"],
-                        sigma_y=parameters["sigma_y"],
-                        seed=image_seed,
-                    )
-                textures.append(texture)
-            generated_textures[:] = textures
-            if results_figure is not None:
-                plt.close(results_figure)
-            columns = min(4, max(1, image_count))
-            rows = int(np.ceil(image_count / columns))
-            results_figure, axes = plt.subplots(rows, columns, squeeze=False, figsize=(4 * columns, 4 * rows))
-            for image_index, texture in enumerate(textures):
-                axis = axes.flat[image_index]
-                axis.imshow(texture, cmap="gray", vmin=0, vmax=1)
-                axis.set_title(f"{selected_type} {image_index + 1}")
-                axis.axis("off")
-            for axis in axes.flat[image_count:]:
-                axis.axis("off")
-            results_figure.tight_layout()
-            results_figure.show()
-            status.set(f"Generated {image_count} {selected_type} texture(s)")
-        except (TypeError, ValueError) as error:
-            messagebox.showerror("Invalid input", str(error), parent=root)
-            status.set("Invalid input")
-
-    ttk.Button(form_frame, text="Generate Textures", command=generate_from_form).pack(anchor="e", pady=(0, 8))
-    ttk.Button(form_frame, text="Export Results as CSV", command=export_textures).pack(anchor="e", pady=(0, 8))
     ttk.Label(form_frame, textvariable=status).pack(anchor="w")
     root.mainloop()
     
