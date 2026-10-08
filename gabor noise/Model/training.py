@@ -165,7 +165,6 @@ class PatchGAN:
         sample_directory=None,
         sample_interval=10,
         sample_count=8,
-        progress_callback=None,
     ):
         """Train the GAN and optionally save fixed-noise samples during training.
 
@@ -204,13 +203,6 @@ class PatchGAN:
                 discriminator_losses.append(float(discriminator_loss))
             history["generator_loss"].append(float(np.mean(generator_losses)))
             history["discriminator_loss"].append(float(np.mean(discriminator_losses)))
-            if progress_callback is not None:
-                progress_callback(
-                    epoch,
-                    epochs,
-                    history["generator_loss"][-1],
-                    history["discriminator_loss"][-1],
-                )
             if sample_directory is not None and (epoch % sample_interval == 0 or epoch == epochs):
                 self.save_samples(sample_directory / f"epoch_{epoch:04d}", sample_count, seed)
         return history
@@ -263,4 +255,5 @@ class PatchGAN:
     def generate_patches(self, image, patch_size=(64, 64), stride=32):
         size = patch_size[0] if isinstance(patch_size, tuple) else patch_size
         return extract_patches(image, size, stride)
+
 
