@@ -41,7 +41,24 @@ def extract_gabor_parameters(image, max_components=8):
     gray_img -= gray_img.mean()
     gray_img /= gray_img.std() + 1e-8
 
-    frequencies = np.geomspace(0.02, 0.45, 12)
+    power_spectrum = get_power_spectrum()
+    dominant_frequencies = estimate_dominant_frequencies(
+        power_spectrum,
+        num_frequencies=5,
+    )
+    dominant_values = [
+        item["frequency"]
+        for item in dominant_frequencies
+        if item["frequency"] > 0.0
+    ]
+    if dominant_values:
+        frequency_min = max(0.01, min(dominant_values) * 0.7)
+        frequency_max = min(0.45, max(dominant_values) * 1.3)
+        if frequency_max <= frequency_min:
+            frequency_min, frequency_max = 0.02, 0.45
+    else:
+        frequency_min, frequency_max = 0.02, 0.45
+    frequencies = np.geomspace(frequency_min, frequency_max, 12)
     orientations = np.arange(8, dtype=np.float32) * np.pi / 8
     sigmas = ((1.0, 1.0), (2.0, 1.0), (3.0, 2.0), (5.0, 2.0), (7.0, 3.0))
     candidates = []
@@ -99,6 +116,7 @@ def extract_gabor_parameters(image, max_components=8):
         "luminance_std": float(np.std(luminance)),
         "specular_mean": float(np.mean(highlights)),
         "specular_std": float(np.std(highlights)),
+        "energy": float(primary["energy"]),
         "image_size": {"height": int(source.shape[0]), "width": int(source.shape[1])},
         "uv_map": None,
         "palette": [
@@ -213,4 +231,125 @@ def get_power_spectrum(image=None):
     f_shifted = np.fft.fftshift(f_transform)
     power_spectrum = np.abs(f_shifted) ** 2 #Array of power spectrum values
     power_spectrum = normalize(power_spectrum)
+
+
+
     return power_spectrum
+
+
+
+def generate_gabor_noise(height, width, gabor_parameters, seed=None, use_all_components = True):
+    """Generate a Gabor noise image based on extracted parameters and GAN training"""
+
+    """
+    "frequency": primary["frequency"],
+    "theta": primary["theta"],
+    "sigma_x": primary["sigma_x"],
+    "sigma_y": primary["sigma_y"],
+    "noise_amplitude": primary["response_std"],
+    "components": components,
+    "color_mean": np.mean(rgb, axis=(0, 1)).tolist(),
+    "color_std": np.std(rgb, axis=(0, 1)).tolist(),
+    "luminance_mean": float(np.mean(luminance)),
+    "luminance_std": float(np.std(luminance)),
+    "specular_mean": float(np.mean(highlights)),
+    "specular_std": float(np.std(highlights)),
+    "image_size": {"height": int(source.shape[0]), "width": int(source.shape[1])},
+    "uv_map": None,
+    "palette": [
+        {
+            "rgb": color.rgb,
+            "hex": color.hex,
+            "hsv": color.hsv,
+            "frequency": float(color.frequency),
+        }
+        for color in palette.colors
+    ],
+    "power_spectrum": power_spectrum,
+    """
+
+    rng = np.random.default_rng(seed) # Create a random number generator on seed
+
+    noise = rng.standard_normal((height, width), dtype=np.float32) #std norm distribution for noise generation
+
+    generated = np.zeros_like(noise, dtype=np.float32) #accumulate the generated Gabor noise :: generated += weight * response
+
+    components = gabor_parameters.get("components", [])
+    if not components or use_all_components:
+        components = [param for param in gabor_parameters.get("components", [])]
+
+    weights = np.asarray([component.get("energy", 1.0) for component in components], dtype=np.float32)
+
+    weights /= weights.sum() + 1e-8 #normalize weights to sum to 1
+
+    for component, weight in zip(components, weights):
+        frequency = component.get("frequency", 0.1)
+        theta = component.get("theta", 0.0)
+        sigma_x = component.get("sigma_x", 1.0)
+        sigma_y = component.get("sigma_y", 1.0)
+
+        kernel = gabor_kernel(frequency, theta=theta, sigma_x=sigma_x, sigma_y=sigma_y)
+        real_response = ndi.convolve(noise, np.real(kernel), mode="wrap")
+        imaginary_response = ndi.convolve(noise, np.imag(kernel), mode="wrap")
+        response_magnitude = np.sqrt(real_response**2 + imaginary_response**2)
+
+        generated += weight * response_magnitude
+
+    return generated
+
+def colorize_gabor_noise(gray_gabor_noise, parameters):
+    palette = parameters.get("palette", [])
+
+    if not palette:
+        gray = normalize(gray_gabor_noise)
+        return np.repeat(gray[:, :, np.newaxis], 3, axis=2)
+    palette_rgb = np.asarray(
+        [color["rgb"] for color in palette], dtype=np.float32
+    ) / 255.0
+
+    gray = normalize(gray_gabor_noise)
+    positions = np.linspace(0.0, 1.0, len(palette_rgb))
+    output = np.empty((*gray.shape, 3), dtype=np.float32)
+
+    for channel in range(3):
+        output[..., channel] = np.interp(gray, positions, palette_rgb[:, channel])
+    return np.uint8(np.clip(output * 255.0, 0, 255))
+
+def estimate_dominant_frequencies(
+    power_spectrum,
+    num_frequencies=5,
+    bins=64,
+    min_frequency=0.01,
+):
+    """Estimate dominant radial frequencies from ``get_power_spectrum`` output."""
+    power_spectrum = np.asarray(power_spectrum, dtype=np.float32)
+    if power_spectrum.ndim != 2:
+        raise ValueError("power_spectrum must be a two-dimensional array")
+    if num_frequencies < 1:
+        raise ValueError("num_frequencies must be at least 1")
+    if bins < 1:
+        raise ValueError("bins must be at least 1")
+    if not 0.0 <= min_frequency < 0.5:
+        raise ValueError("min_frequency must be in the range [0, 0.5)")
+
+    height, width = power_spectrum.shape
+    y, x = np.indices(power_spectrum.shape)
+    x_frequency = (x - width // 2) / width
+    y_frequency = (y - height // 2) / height
+    radial_frequency = np.sqrt(x_frequency**2 + y_frequency**2)
+
+    frequency_edges = np.linspace(min_frequency, 0.5, bins + 1)
+    candidates = []
+    for lower, upper in zip(frequency_edges[:-1], frequency_edges[1:]):
+        mask = (
+            (radial_frequency >= lower)
+            & (radial_frequency < upper)
+        )
+        if np.any(mask):
+            candidates.append({
+                "frequency": float((lower + upper) / 2.0),
+                "power": float(np.mean(power_spectrum[mask])),
+            })
+
+    candidates.sort(key=lambda item: item["power"], reverse=True)
+    return candidates[:num_frequencies]
