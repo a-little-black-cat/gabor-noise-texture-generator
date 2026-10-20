@@ -94,6 +94,8 @@ create_samples_gif(
     output_directory / "training_progress.gif",
     duration=500,
 )
+
+
 generated_image = trainer.generate(count=1, seed=42).numpy()[0]
 generated_image = np.clip(generated_image * 255.0, 0, 255).astype(np.uint8)
 

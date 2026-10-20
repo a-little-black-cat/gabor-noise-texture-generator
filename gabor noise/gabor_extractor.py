@@ -238,64 +238,104 @@ def get_power_spectrum(image=None):
 
 
 
-def generate_gabor_noise(height, width, gabor_parameters, seed=None, use_all_components = True):
-    """Generate a Gabor noise image based on extracted parameters and GAN training"""
+def generate_gabor_noise(
+    height,
+    width,
+    gabor_parameters,
+    seed=None,
+    use_all_components=True,
+):
+    """Generate 2-D sparse-convolution Gabor noise.
 
+    For each component, impulses are placed at Poisson-distributed positions
+    with random phases and convolved with a complex Gabor kernel.  The real
+    part of that convolution is equivalent to summing
+
+    ``1 / sqrt(lambda) * sum(g(x - x_i, phi_i))``.
+
+    ``poisson_density`` is the expected number of impulses per pixel.  When it
+    is not present in the extracted parameters, the component frequency is
+    used as a conservative default.  ``lambda`` is also accepted as an alias
+    for ``poisson_density``.
     """
-    "frequency": primary["frequency"],
-    "theta": primary["theta"],
-    "sigma_x": primary["sigma_x"],
-    "sigma_y": primary["sigma_y"],
-    "noise_amplitude": primary["response_std"],
-    "components": components,
-    "color_mean": np.mean(rgb, axis=(0, 1)).tolist(),
-    "color_std": np.std(rgb, axis=(0, 1)).tolist(),
-    "luminance_mean": float(np.mean(luminance)),
-    "luminance_std": float(np.std(luminance)),
-    "specular_mean": float(np.mean(highlights)),
-    "specular_std": float(np.std(highlights)),
-    "image_size": {"height": int(source.shape[0]), "width": int(source.shape[1])},
-    "uv_map": None,
-    "palette": [
-        {
-            "rgb": color.rgb,
-            "hex": color.hex,
-            "hsv": color.hsv,
-            "frequency": float(color.frequency),
-        }
-        for color in palette.colors
-    ],
-    "power_spectrum": power_spectrum,
-    """
+    if not isinstance(height, (int, np.integer)) or height < 1:
+        raise ValueError("height must be a positive integer")
+    if not isinstance(width, (int, np.integer)) or width < 1:
+        raise ValueError("width must be a positive integer")
 
-    rng = np.random.default_rng(seed) # Create a random number generator on seed
+    extracted_components = gabor_parameters.get("components", [])
+    if use_all_components:
+        components = list(extracted_components)
+    elif extracted_components:
+        components = [extracted_components[0]]
+    else:
+        components = [gabor_parameters]
+    if not components:
+        components = [gabor_parameters]
 
-    noise = rng.standard_normal((height, width), dtype=np.float32) #std norm distribution for noise generation
-
-    generated = np.zeros_like(noise, dtype=np.float32) #accumulate the generated Gabor noise :: generated += weight * response
-
-    components = gabor_parameters.get("components", [])
-    if not components or use_all_components:
-        components = [param for param in gabor_parameters.get("components", [])]
-
-    weights = np.asarray([component.get("energy", 1.0) for component in components], dtype=np.float32)
-
-    weights /= weights.sum() + 1e-8 #normalize weights to sum to 1
+    rng = np.random.default_rng(seed)
+    generated = np.zeros((height, width), dtype=np.float32)
+    energies = np.asarray(
+        [max(float(component.get("energy", 1.0)), 0.0) for component in components],
+        dtype=np.float32,
+    )
+    weights = energies / (energies.sum() + np.finfo(np.float32).eps)
 
     for component, weight in zip(components, weights):
-        frequency = component.get("frequency", 0.1)
-        theta = component.get("theta", 0.0)
-        sigma_x = component.get("sigma_x", 1.0)
-        sigma_y = component.get("sigma_y", 1.0)
+        frequency = float(component.get("frequency", gabor_parameters.get("frequency", 0.1)))
+        sigma_x = float(component.get("sigma_x", gabor_parameters.get("sigma_x", 1.0)))
+        sigma_y = float(component.get("sigma_y", gabor_parameters.get("sigma_y", 1.0)))
+        amplitude = float(
+            component.get(
+                "response_std",
+                component.get("noise_amplitude", gabor_parameters.get("noise_amplitude", 1.0)),
+            )
+        )
+        if frequency <= 0.0 or sigma_x <= 0.0 or sigma_y <= 0.0:
+            raise ValueError("Gabor frequency and sigmas must be positive")
 
-        kernel = gabor_kernel(frequency, theta=theta, sigma_x=sigma_x, sigma_y=sigma_y)
-        real_response = ndi.convolve(noise, np.real(kernel), mode="wrap")
-        imaginary_response = ndi.convolve(noise, np.imag(kernel), mode="wrap")
-        response_magnitude = np.sqrt(real_response**2 + imaginary_response**2)
+        density = float(
+            component.get(
+                "poisson_density",
+                component.get(
+                    "lambda",
+                    gabor_parameters.get("poisson_density", frequency),
+                ),
+            )
+        )
+        if density <= 0.0:
+            raise ValueError("poisson_density must be positive")
 
-        generated += weight * response_magnitude
+        point_count = rng.poisson(height * width * density)
+        impulse_field = np.zeros((height, width), dtype=np.complex64)
+        if point_count:
+            rows = rng.integers(0, height, size=point_count)
+            columns = rng.integers(0, width, size=point_count)
+            phases = rng.uniform(0.0, 2.0 * np.pi, size=point_count)
+            np.add.at(
+                impulse_field,
+                (rows, columns),
+                np.exp(1j * phases).astype(np.complex64),
+            )
+
+        kernel = gabor_kernel(
+            frequency,
+            theta=float(component.get("theta", gabor_parameters.get("theta", 0.0))),
+            sigma_x=sigma_x,
+            sigma_y=sigma_y,
+        )
+        response = ndi.convolve(impulse_field, kernel, mode="wrap")
+        generated += (
+            weight
+            * amplitude
+            * np.real(response / np.sqrt(density)).astype(np.float32)
+        )
 
     return generated
+
+def gabor_function(x, K, a, w, phi):
+    """Compute the Gabor function value at position x."""
+    return K * np.exp(-np.pi * a**2 * np.abs(x)**2) * np.cos(2 * np.pi * w * x + phi)
 
 def colorize_gabor_noise(gray_gabor_noise, parameters):
     palette = parameters.get("palette", [])
@@ -353,3 +393,6 @@ def estimate_dominant_frequencies(
 
     candidates.sort(key=lambda item: item["power"], reverse=True)
     return candidates[:num_frequencies]
+
+
+
