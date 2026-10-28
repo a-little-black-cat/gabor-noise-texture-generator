@@ -158,6 +158,7 @@ class PatchGAN:
         image=None,
         gabor_parameters=None,
         condition_vector=None,
+        learning_rate=None,
         epochs=500,
         batch_size=32,
         stride=32,
@@ -165,19 +166,30 @@ class PatchGAN:
         sample_directory=None,
         sample_interval=10,
         sample_count=8,
+        checkpoint_directory=None,
+        resume=False,
     ):
         """Train the GAN and optionally save fixed-noise samples during training.
 
         Samples are saved in ``sample_directory/epoch_NNNN``. The final epoch
         is also saved when it does not fall exactly on ``sample_interval``.
         """
+        print("Calling train()...")
         image = self.source_image if image is None else image
         if image is None:
             raise ValueError("Provide a source image or set source_image before training")
+        if learning_rate is not None:
+            if learning_rate <= 0.0:
+                raise ValueError("learning_rate must be positive")
+            self.generator_optimizer.learning_rate.assign(learning_rate)
+            self.discriminator_optimizer.learning_rate.assign(learning_rate)
         if sample_directory is not None and sample_interval < 1:
             raise ValueError("sample_interval must be at least 1")
         if sample_count < 1:
             raise ValueError("sample_count must be at least 1")
+        print("Initializing training...")
+
+        
         patches = extract_patches(image, self.patch_size, stride)
         condition = self._resolve_condition(
             condition_vector if condition_vector is not None else (
@@ -191,7 +203,31 @@ class PatchGAN:
         ).batch(batch_size)
         history = {"generator_loss": [], "discriminator_loss": []}
         sample_directory = Path(sample_directory) if sample_directory is not None else None
-        for epoch in range(1, epochs + 1):
+        checkpoint_manager = None
+        start_epoch = 0
+        if checkpoint_directory is not None:
+            checkpoint = tf.train.Checkpoint(
+                generator=self.gan.generator,
+                discriminator=self.gan.discriminator,
+                generator_optimizer=self.generator_optimizer,
+                discriminator_optimizer=self.discriminator_optimizer,
+            )
+            checkpoint_manager = tf.train.CheckpointManager(
+                checkpoint,
+                Path(checkpoint_directory),
+                max_to_keep=3,
+            )
+            if resume and checkpoint_manager.latest_checkpoint:
+                checkpoint.restore(checkpoint_manager.latest_checkpoint)
+                metadata_path = Path(checkpoint_manager.latest_checkpoint + ".npz")
+                if metadata_path.is_file():
+                    metadata = np.load(metadata_path)
+                    start_epoch = int(metadata["epoch"])
+                    history = {
+                        "generator_loss": metadata["generator_loss"].tolist(),
+                        "discriminator_loss": metadata["discriminator_loss"].tolist(),
+                    }
+        for epoch in range(start_epoch + 1, epochs + 1):
             generator_losses = []
             discriminator_losses = []
             for real_images, batch_conditions in dataset:
@@ -205,6 +241,14 @@ class PatchGAN:
             history["discriminator_loss"].append(float(np.mean(discriminator_losses)))
             if sample_directory is not None and (epoch % sample_interval == 0 or epoch == epochs):
                 self.save_samples(sample_directory / f"epoch_{epoch:04d}", sample_count, seed)
+            if checkpoint_manager is not None:
+                checkpoint_path = checkpoint_manager.save(checkpoint_number=epoch)
+                np.savez(
+                    checkpoint_path + ".npz",
+                    epoch=epoch,
+                    generator_loss=np.asarray(history["generator_loss"], dtype=np.float32),
+                    discriminator_loss=np.asarray(history["discriminator_loss"], dtype=np.float32),
+                )
         return history
 
     @tf.function
@@ -255,5 +299,3 @@ class PatchGAN:
     def generate_patches(self, image, patch_size=(64, 64), stride=32):
         size = patch_size[0] if isinstance(patch_size, tuple) else patch_size
         return extract_patches(image, size, stride)
-
-

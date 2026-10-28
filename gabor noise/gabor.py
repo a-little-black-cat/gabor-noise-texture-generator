@@ -548,6 +548,8 @@ def normalize(image):
     return image / (image.max() + 1e-8)
 
 
+
+
 # height: Number of rows in the generated noise image.
 # width: Number of columns in the generated noise image.
 # frequency: Gabor carrier frequency.
@@ -597,7 +599,7 @@ def make_gabor_noise(
 
     return noise
 
-
+#|||||||||||||||||||||||||||||||||||||||||||| Deprecated the texture specifics 
 # height: Number of rows in the generated texture.
 # width: Number of columns in the generated texture.
 # brick_width: Width of one brick in pixels.

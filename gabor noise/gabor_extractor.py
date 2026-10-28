@@ -244,24 +244,52 @@ def generate_gabor_noise(
     gabor_parameters,
     seed=None,
     use_all_components=True,
+    frequency_scale=1.0,
+    sigma_scale=1.0,
+    density_scale=0.1,
+    envelope_size=None,
+    subbands=None,
 ):
-    """Generate 2-D sparse-convolution Gabor noise.
+    """2-D sparse-convolution Gabor noise
 
-    For each component, impulses are placed at Poisson-distributed positions
-    with random phases and convolved with a complex Gabor kernel.  The real
-    part of that convolution is equivalent to summing
+    random impulses placed using Poisson process, with phase randomized uniformly in [0, 2pi].
+    The output is a sum of Gabor functions.
+
 
     ``1 / sqrt(lambda) * sum(g(x - x_i, phi_i))``.
 
     ``poisson_density`` is the expected number of impulses per pixel.  When it
-    is not present in the extracted parameters, the component frequency is
-    used as a conservative default.  ``lambda`` is also accepted as an alias
-    for ``poisson_density``.
+    is not present in the extracted parameters, a fraction of the component
+    frequency is used as a sparse default.  ``lambda`` is also accepted as an
+    alias for ``poisson_density``.
+
+    ``sigma_x`` and ``sigma_y`` are the envelope standard deviations in pixels.
+    ``envelope_size`` can override them globally as a scalar or ``(x, y)`` pair.
+    ``subbands`` can be a sequence of dictionaries with ``min_frequency`` and
+    ``max_frequency`` bounds; each component is generated only in its matching
+    band.  A subband may also provide ``envelope_size`` and ``density_scale``.
     """
+
     if not isinstance(height, (int, np.integer)) or height < 1:
         raise ValueError("height must be a positive integer")
     if not isinstance(width, (int, np.integer)) or width < 1:
         raise ValueError("width must be a positive integer")
+    if frequency_scale <= 0.0 or sigma_scale <= 0.0 or density_scale <= 0.0:
+        raise ValueError("frequency_scale, sigma_scale, and density_scale must be positive")
+    if envelope_size is not None:
+        if isinstance(envelope_size, (int, float, np.integer, np.floating)):
+            envelope_size = (float(envelope_size), float(envelope_size))
+        elif len(envelope_size) == 2:
+            envelope_size = (float(envelope_size[0]), float(envelope_size[1]))
+        else:
+            raise ValueError("envelope_size must be a positive scalar or a pair")
+        if min(envelope_size) <= 0.0:
+            raise ValueError("envelope_size values must be positive")
+    if subbands is not None and not subbands:
+        raise ValueError("subbands must contain at least one band")
+
+    #set envelope size
+
 
     extracted_components = gabor_parameters.get("components", [])
     if use_all_components:
@@ -282,9 +310,38 @@ def generate_gabor_noise(
     weights = energies / (energies.sum() + np.finfo(np.float32).eps)
 
     for component, weight in zip(components, weights):
-        frequency = float(component.get("frequency", gabor_parameters.get("frequency", 0.1)))
-        sigma_x = float(component.get("sigma_x", gabor_parameters.get("sigma_x", 1.0)))
-        sigma_y = float(component.get("sigma_y", gabor_parameters.get("sigma_y", 1.0)))
+        component_frequency = float(
+            component.get("frequency", gabor_parameters.get("frequency", 0.1))
+        )
+        matching_subband = None
+        if subbands is not None:
+            for subband in subbands:
+                minimum = float(subband.get("min_frequency", 0.0))
+                maximum = float(subband.get("max_frequency", np.inf))
+                if minimum <= component_frequency < maximum:
+                    matching_subband = subband
+                    break
+            if matching_subband is None:
+                continue
+        frequency = float(
+            component_frequency
+        ) * frequency_scale
+        if matching_subband is not None and "envelope_size" in matching_subband:
+            band_envelope = matching_subband["envelope_size"]
+            if isinstance(band_envelope, (int, float)):
+                band_envelope = (float(band_envelope), float(band_envelope))
+            if len(band_envelope) != 2 or min(band_envelope) <= 0.0:
+                raise ValueError("subband envelope_size must be a positive scalar or pair")
+            sigma_x, sigma_y = map(float, band_envelope)
+        elif envelope_size is not None:
+            sigma_x, sigma_y = envelope_size
+        else:
+            sigma_x = float(
+                component.get("sigma_x", gabor_parameters.get("sigma_x", 1.0))
+            ) * sigma_scale
+            sigma_y = float(
+                component.get("sigma_y", gabor_parameters.get("sigma_y", 1.0))
+            ) * sigma_scale
         amplitude = float(
             component.get(
                 "response_std",
@@ -294,14 +351,20 @@ def generate_gabor_noise(
         if frequency <= 0.0 or sigma_x <= 0.0 or sigma_y <= 0.0:
             raise ValueError("Gabor frequency and sigmas must be positive")
 
-        density = float(
-            component.get(
-                "poisson_density",
-                component.get(
-                    "lambda",
-                    gabor_parameters.get("poisson_density", frequency),
-                ),
-            )
+        explicit_density = component.get("poisson_density")
+        if explicit_density is None:
+            explicit_density = component.get("lambda")
+        if explicit_density is None:
+            explicit_density = gabor_parameters.get("poisson_density")
+        component_density_scale = (
+            float(matching_subband["density_scale"])
+            if matching_subband is not None and "density_scale" in matching_subband
+            else density_scale
+        )
+        density = (
+            float(explicit_density)
+            if explicit_density is not None
+            else frequency * component_density_scale
         )
         if density <= 0.0:
             raise ValueError("poisson_density must be positive")
@@ -393,6 +456,3 @@ def estimate_dominant_frequencies(
 
     candidates.sort(key=lambda item: item["power"], reverse=True)
     return candidates[:num_frequencies]
-
-
-

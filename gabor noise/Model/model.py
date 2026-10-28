@@ -9,6 +9,8 @@ os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
 
 import tensorflow as tf
 
+tf.config.optimizer.set_experimental_options({"remapping": False})
+
 keras = tf.keras
 layers = tf.keras.layers
 
@@ -37,7 +39,7 @@ class TextureGAN:
         start_size = self.patch_size // 16
         model = keras.Sequential(name="texture_generator")
         #model.add(layers.Input(shape=(self.latent_dim,)))
-        
+
         combined_input = layers.Input(
             shape=(self.latent_dim + self.condition_dim,),
             name="noise_and_condition",
