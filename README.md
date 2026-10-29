@@ -97,3 +97,6 @@ nvidia-smi
 If the verification command prints an empty list, check `nvidia-smi` inside
 Ubuntu and confirm that the Windows NVIDIA driver is current. Do not install a
 separate Linux NVIDIA driver inside WSL2.
+
+Example run for just generating:
+`python train_texture_gan.py --gen-output-only --gabor-density-scale 0.1 --gabor-envelope-scale 4.0 --gaussian-blur-sigma 6.0`
