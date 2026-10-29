@@ -19,7 +19,10 @@ import tensorflow as tf
 from optuna.trial import TrialState
 from training import PatchGAN, create_samples_gif
 
-tf.config.optimizer.set_experimental_options({"remapping": False})
+# Avoid TensorFlow's NHWC/NCHW layout rewrite failing on GPU dropout graphs.
+tf.config.optimizer.set_experimental_options(
+    {"remapping": False, "layout_optimizer": False}
+)
 
 
 def parse_args():
@@ -44,11 +47,39 @@ def parse_args():
         action="store_true",
         help="Stop instead of silently training on CPU when no GPU is detected",
     )
+    parser.add_argument(
+        "--gabor-density-scale",
+        type=float,
+        default=0.1,
+        help="Multiplier for Gabor impulse density (default: 0.1)",
+    )
+    parser.add_argument(
+        "--gabor-envelope-scale",
+        type=float,
+        default=1.0,
+        help="Multiplier for Gabor envelope size (default: 1.0)",
+    )
+    parser.add_argument(
+        "--gaussian-blur-sigma",
+        type=float,
+        default=1.0,
+        help="Gaussian noise blur sigma in pixels (default: 1.0)",
+    )
     return parser.parse_args()
 
 
 def write_state(path, state):
     path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+
+
+def batch_sizes_for_patch(patch_size):
+    """Keep activation memory bounded as patch area increases."""
+    return {
+        64: [16, 32, 64, 128],
+        128: [8, 16, 32, 64],
+        256: [2, 4, 8, 16],
+        512: [1, 2, 4],
+    }[patch_size]
 
 
 def configure_device(require_gpu=False):
@@ -68,7 +99,15 @@ def configure_device(require_gpu=False):
             )
 
 
-def generate_outputs(trainer, source_height, source_width, output_directory):
+def generate_outputs(
+    trainer,
+    source_height,
+    source_width,
+    output_directory,
+    gabor_density_scale=0.1,
+    gabor_envelope_scale=1.0,
+    gaussian_blur_sigma=1.0,
+):
     generated_image = trainer.generate(count=1, seed=42).numpy()[0]
     generated_image = np.clip(generated_image * 255.0, 0, 255).astype(np.uint8)
     final_gabor_parameters = gabor_extractor.extract_gabor_parameters(generated_image)
@@ -77,6 +116,18 @@ def generate_outputs(trainer, source_height, source_width, output_directory):
         source_width,
         final_gabor_parameters,
         seed=42,
+        density_scale=gabor_density_scale,
+        sigma_scale=gabor_envelope_scale,
+    )
+    gabor_mean = float(np.mean(grayscale_image))
+    gabor_std = float(np.std(grayscale_image))
+    gaussian_image = gabor_extractor.generate_gaussian_noise(
+        source_height,
+        source_width,
+        seed=42,
+        blur_sigma=gaussian_blur_sigma,
+        target_mean=gabor_mean,
+        target_std=gabor_std,
     )
 
     power_spectrum = gabor_extractor.get_power_spectrum(grayscale_image)
@@ -95,11 +146,48 @@ def generate_outputs(trainer, source_height, source_width, output_directory):
     generated_rgb = gabor_extractor.colorize_gabor_noise(
         grayscale_image, final_gabor_parameters
     )
+    gaussian_rgb = gabor_extractor.colorize_gabor_noise(
+        gaussian_image, final_gabor_parameters
+    )
     cv.imwrite(
         str(output_directory / "grayscale_gabor_noise.png"),
-        np.uint8(grayscale_image * 255),
+        np.uint8(gabor_extractor.normalize(grayscale_image) * 255),
     )
     cv.imwrite(str(output_directory / "colorized_gabor_noise.png"), generated_rgb)
+    cv.imwrite(
+        str(output_directory / "grayscale_gaussian_noise.png"),
+        np.uint8(gabor_extractor.normalize(gaussian_image) * 255),
+    )
+    cv.imwrite(
+        str(output_directory / "colorized_gaussian_noise.png"),
+        gaussian_rgb,
+    )
+    noise_settings = {
+        "gabor": {
+            "density_scale": gabor_density_scale,
+            "envelope_scale": gabor_envelope_scale,
+            "seed": 42,
+            "source": "sparse Poisson impulses convolved with extracted Gabor components",
+            "mean": gabor_mean,
+            "std": gabor_std,
+        },
+        "gaussian": {
+            "blur_sigma": gaussian_blur_sigma,
+            "seed": 42,
+            "source": "Gaussian white noise smoothed with a wrapped Gaussian filter",
+            "matched_to_gabor_mean": gabor_mean,
+            "matched_to_gabor_std": gabor_std,
+        },
+    }
+    (output_directory / "noise_settings.json").write_text(
+        json.dumps(noise_settings, indent=2),
+        encoding="utf-8",
+    )
+    print("Noise outputs:")
+    print(f"  Gabor: density_scale={gabor_density_scale}, envelope_scale={gabor_envelope_scale}")
+    print(f"    sparse Poisson impulses + extracted Gabor envelopes; seed=42")
+    print(f"  Gaussian: blur_sigma={gaussian_blur_sigma}; seed=42")
+    print(f"    smoothed Gaussian noise matched to Gabor mean={gabor_mean:.6f}, std={gabor_std:.6f}")
     return final_gabor_parameters
 
 
@@ -131,7 +219,9 @@ def main():
         best_hyperparameters = state.get("best_hyperparameters")
         if not best_hyperparameters:
             raise ValueError(
-                "Cannot generate outputs: saved best_hyperparameters are missing"
+                "Cannot generate outputs: training has not completed and saved "
+                "best_hyperparameters are missing. Resume with "
+                "--from-save-state --require-gpu first."
             )
         source_parameters = gabor_extractor.extract_gabor_parameters(source_path)
         trainer = PatchGAN(
@@ -164,6 +254,9 @@ def main():
             source_height,
             source_width,
             output_directory,
+            args.gabor_density_scale,
+            args.gabor_envelope_scale,
+            args.gaussian_blur_sigma,
         )
         print("Final Gabor parameters of generated image:", final_gabor_parameters)
         print("Generated outputs using saved model state.")
@@ -191,7 +284,6 @@ def main():
         "latent_dim": [64, 128, 256, 512],
         "epochs": [100, 200, 300, 400, 500, 1000],
         "stride": [16, 32, 64, 128],
-        "batch_size": [16, 32, 64, 128],
         "learning_rate": [1e-5, 5e-5, 1e-4, 2e-4, 5e-4, 1e-3],
         "sample_interval": [5, 10, 20, 50],
         "sample_count": [4, 8, 16, 32],
@@ -208,7 +300,7 @@ def main():
 
     study_path = output_directory / "optuna.db"
     study = optuna.create_study(
-        study_name="texture_gan",
+        study_name="texture_gan_gpu",
         direction="minimize",
         storage=f"sqlite:///{study_path.resolve().as_posix()}",
         load_if_exists=True,
@@ -217,39 +309,61 @@ def main():
     write_state(state_path, state)
 
     def objective(trial):
+        patch_size = trial.suggest_categorical(
+            "patch_size", hyperparameters["patch_size"]
+        )
+        latent_dim = trial.suggest_categorical(
+            "latent_dim", hyperparameters["latent_dim"]
+        )
+        batch_size = trial.suggest_categorical(
+            f"batch_size_{patch_size}", batch_sizes_for_patch(patch_size)
+        )
+        epochs = trial.suggest_categorical("epochs", hyperparameters["epochs"])
+        print(
+            f"Starting Optuna trial {trial.number}: "
+            f"patch_size={patch_size}, latent_dim={latent_dim}, "
+            f"batch_size={batch_size}, epochs={epochs}",
+            flush=True,
+        )
         trainer = PatchGAN(
             source_image=source_path,
             gabor_parameters=source_parameters,
-            patch_size=trial.suggest_categorical(
-                "patch_size", hyperparameters["patch_size"]
-            ),
-            latent_dim=trial.suggest_categorical(
-                "latent_dim", hyperparameters["latent_dim"]
-            ),
+            patch_size=patch_size,
+            latent_dim=latent_dim,
             learning_rate=trial.suggest_categorical(
                 "learning_rate", hyperparameters["learning_rate"]
             ),
         )
-        return trainer.train(
-            epochs=trial.suggest_categorical("epochs", hyperparameters["epochs"]),
-            batch_size=trial.suggest_categorical(
-                "batch_size", hyperparameters["batch_size"]
-            ),
-            stride=trial.suggest_categorical("stride", hyperparameters["stride"]),
-            sample_directory=output_directory / "optuna_samples",
-            sample_interval=trial.suggest_categorical(
-                "sample_interval", hyperparameters["sample_interval"]
-            ),
-            sample_count=trial.suggest_categorical(
-                "sample_count", hyperparameters["sample_count"]
-            ),
-        )["generator_loss"][-1]
+        try:
+            return trainer.train(
+                epochs=epochs,
+                batch_size=batch_size,
+                stride=trial.suggest_categorical("stride", hyperparameters["stride"]),
+                sample_directory=output_directory / "optuna_samples",
+                sample_interval=trial.suggest_categorical(
+                    "sample_interval", hyperparameters["sample_interval"]
+                ),
+                sample_count=trial.suggest_categorical(
+                    "sample_count", hyperparameters["sample_count"]
+                ),
+            )["generator_loss"][-1]
+        except tf.errors.OpError as error:
+            if "out of memory" not in str(error).lower():
+                raise
+            raise optuna.TrialPruned("GPU ran out of memory for this trial") from error
+        finally:
+            del trainer
+            tf.keras.backend.clear_session()
 
     completed_trials = len(study.get_trials(states=[TrialState.COMPLETE]))
     if completed_trials < 10:
         study.optimize(objective, n_trials=10 - completed_trials)
 
-    best_hyperparameters = study.best_params
+    best_hyperparameters = dict(study.best_params)
+    patch_size = best_hyperparameters["patch_size"]
+    best_hyperparameters["batch_size"] = best_hyperparameters.pop(
+        f"batch_size_{patch_size}"
+    )
     state.update(
         {
             "phase": "final_training",
@@ -291,6 +405,9 @@ def main():
         source_height,
         source_width,
         output_directory,
+        args.gabor_density_scale,
+        args.gabor_envelope_scale,
+        args.gaussian_blur_sigma,
     )
 
     print("Final generator loss:", history["generator_loss"][-1])

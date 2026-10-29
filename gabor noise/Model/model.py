@@ -9,7 +9,10 @@ os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
 
 import tensorflow as tf
 
-tf.config.optimizer.set_experimental_options({"remapping": False})
+# Avoid TensorFlow's NHWC/NCHW layout rewrite failing on GPU dropout graphs.
+tf.config.optimizer.set_experimental_options(
+    {"remapping": False, "layout_optimizer": False}
+)
 
 keras = tf.keras
 layers = tf.keras.layers

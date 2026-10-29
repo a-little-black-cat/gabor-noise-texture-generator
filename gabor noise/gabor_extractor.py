@@ -396,6 +396,37 @@ def generate_gabor_noise(
 
     return generated
 
+
+def generate_gaussian_noise(
+    height,
+    width,
+    seed=None,
+    blur_sigma=1.0,
+    target_mean=0.0,
+    target_std=1.0,
+):
+    """Generate spatially correlated Gaussian noise with target statistics."""
+    if not isinstance(height, (int, np.integer)) or height < 1:
+        raise ValueError("height must be a positive integer")
+    if not isinstance(width, (int, np.integer)) or width < 1:
+        raise ValueError("width must be a positive integer")
+    if blur_sigma <= 0.0:
+        raise ValueError("blur_sigma must be positive")
+    if target_std < 0.0:
+        raise ValueError("target_std must be non-negative")
+
+    rng = np.random.default_rng(seed)
+    noise = rng.normal(size=(height, width)).astype(np.float32)
+    noise = ndi.gaussian_filter(noise, sigma=float(blur_sigma), mode="wrap")
+    noise -= np.mean(noise)
+    noise_std = np.std(noise)
+    if noise_std > np.finfo(np.float32).eps:
+        noise *= float(target_std) / noise_std
+    else:
+        noise.fill(0.0)
+    return noise + float(target_mean)
+
+
 def gabor_function(x, K, a, w, phi):
     """Compute the Gabor function value at position x."""
     return K * np.exp(-np.pi * a**2 * np.abs(x)**2) * np.cos(2 * np.pi * w * x + phi)

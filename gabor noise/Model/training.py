@@ -187,9 +187,8 @@ class PatchGAN:
             raise ValueError("sample_interval must be at least 1")
         if sample_count < 1:
             raise ValueError("sample_count must be at least 1")
-        print("Initializing training...")
+        print("Initializing training...", flush=True)
 
-        
         patches = extract_patches(image, self.patch_size, stride)
         condition = self._resolve_condition(
             condition_vector if condition_vector is not None else (
@@ -201,6 +200,12 @@ class PatchGAN:
         dataset = tf.data.Dataset.from_tensor_slices((patches, conditions)).shuffle(
             len(patches), seed=seed, reshuffle_each_iteration=True
         ).batch(batch_size)
+        steps_per_epoch = (len(patches) + batch_size - 1) // batch_size
+        print(
+            f"Training {epochs} epochs: {len(patches)} patches, "
+            f"batch size {batch_size}, {steps_per_epoch} steps/epoch",
+            flush=True,
+        )
         history = {"generator_loss": [], "discriminator_loss": []}
         sample_directory = Path(sample_directory) if sample_directory is not None else None
         checkpoint_manager = None
@@ -228,6 +233,7 @@ class PatchGAN:
                         "discriminator_loss": metadata["discriminator_loss"].tolist(),
                     }
         for epoch in range(start_epoch + 1, epochs + 1):
+            print(f"Epoch {epoch}/{epochs}...", flush=True)
             generator_losses = []
             discriminator_losses = []
             for real_images, batch_conditions in dataset:
@@ -239,6 +245,12 @@ class PatchGAN:
                 discriminator_losses.append(float(discriminator_loss))
             history["generator_loss"].append(float(np.mean(generator_losses)))
             history["discriminator_loss"].append(float(np.mean(discriminator_losses)))
+            print(
+                f"Epoch {epoch}/{epochs} complete: "
+                f"generator_loss={history['generator_loss'][-1]:.5f}, "
+                f"discriminator_loss={history['discriminator_loss'][-1]:.5f}",
+                flush=True,
+            )
             if sample_directory is not None and (epoch % sample_interval == 0 or epoch == epochs):
                 self.save_samples(sample_directory / f"epoch_{epoch:04d}", sample_count, seed)
             if checkpoint_manager is not None:

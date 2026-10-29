@@ -63,6 +63,37 @@ Run training and require GPU execution:
 python train_texture_gan.py --require-gpu
 ```
 
+Each completed run writes both Gabor and Gaussian-correlated noise outputs:
+
+- `model_weights/grayscale_gabor_noise.png`
+- `model_weights/colorized_gabor_noise.png`
+- `model_weights/grayscale_gaussian_noise.png`
+- `model_weights/colorized_gaussian_noise.png`
+- `model_weights/noise_settings.json`
+
+The Gaussian output uses smoothed white Gaussian noise whose mean and standard
+deviation are matched to the generated Gabor noise. Adjust the generation
+parameters without changing training:
+
+Run this in the **Ubuntu/WSL terminal**, not PowerShell:
+
+```bash
+python train_texture_gan.py --gen-output-only --require-gpu --gabor-density-scale 0.1 --gabor-envelope-scale 1.0 --gaussian-blur-sigma 1.0
+```
+
+Increase `--gabor-density-scale` for more impulses, increase
+`--gabor-envelope-scale` for larger Gabor envelopes, and increase
+`--gaussian-blur-sigma` for smoother Gaussian noise.
+
+The Optuna search uses smaller batch-size ranges for larger patches because
+GPU memory grows with the patch area. If a trial still exceeds available VRAM,
+it is pruned and the search continues instead of stopping the whole run.
+Check current GPU usage from another Ubuntu terminal with:
+
+```bash
+nvidia-smi
+```
+
 If the verification command prints an empty list, check `nvidia-smi` inside
 Ubuntu and confirm that the Windows NVIDIA driver is current. Do not install a
 separate Linux NVIDIA driver inside WSL2.
